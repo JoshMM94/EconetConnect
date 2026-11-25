@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout project
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Java
@@ -23,17 +23,206 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Install Android SDK components
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Create Android project
+        run: |
+          mkdir -p econet/app/src/main/java/uk/co/econetconnect
+
+          cat > econet/settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "EconetConnect"
+          include(":app")
+          EOF
+
+          cat > econet/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+              id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
+          }
+          EOF
+
+          cat > econet/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          EOF
+
+          cat > econet/app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+              id("org.jetbrains.kotlin.plugin.compose")
+          }
+
+          android {
+              namespace = "uk.co.econetconnect"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "uk.co.econetconnect"
+                  minSdk = 26
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "0.1.0"
+              }
+
+              buildFeatures {
+                  compose = true
+              }
+          }
+
+          dependencies {
+              implementation(platform("androidx.compose:compose-bom:2024.12.01"))
+              implementation("androidx.activity:activity-compose:1.10.0")
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.ui:ui-tooling-preview")
+              implementation("androidx.compose.material3:material3")
+              debugImplementation("androidx.compose.ui:ui-tooling")
+          }
+          EOF
+
+          cat > econet/app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <application
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar"
+                  android:label="Econet Connect"
+                  android:usesCleartextTraffic="false">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > econet/app/src/main/java/uk/co/econetconnect/MainActivity.kt <<'EOF'
+          package uk.co.econetconnect
+
+          import android.os.Bundle
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.rememberScrollState
+          import androidx.compose.foundation.verticalScroll
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.unit.dp
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContent { EconetConnectScreen() }
+              }
+          }
+
+          @Composable
+          fun EconetConnectScreen() {
+              var email by remember { mutableStateOf("") }
+              var password by remember { mutableStateOf("") }
+              var rememberSession by remember { mutableStateOf(true) }
+
+              MaterialTheme {
+                  Scaffold { padding ->
+                      Column(
+                          modifier = Modifier
+                              .fillMaxSize()
+                              .padding(padding)
+                              .verticalScroll(rememberScrollState())
+                              .padding(24.dp),
+                          verticalArrangement = Arrangement.spacedBy(16.dp)
+                      ) {
+                          Text(
+                              "Econet Connect",
+                              style = MaterialTheme.typography.headlineMedium,
+                              fontWeight = FontWeight.Bold
+                          )
+                          Text("Service Edition")
+                          HorizontalDivider()
+                          Text("Cloud account", style = MaterialTheme.typography.titleLarge)
+
+                          OutlinedTextField(
+                              value = email,
+                              onValueChange = { email = it },
+                              label = { Text("Email address") },
+                              singleLine = true,
+                              modifier = Modifier.fillMaxWidth()
+                          )
+
+                          OutlinedTextField(
+                              value = password,
+                              onValueChange = { password = it },
+                              label = { Text("Password") },
+                              singleLine = true,
+                              modifier = Modifier.fillMaxWidth()
+                          )
+
+                          Row(verticalAlignment = Alignment.CenterVertically) {
+                              Checkbox(
+                                  checked = rememberSession,
+                                  onCheckedChange = { rememberSession = it }
+                              )
+                              Text("Keep me signed in")
+                          }
+
+                          Button(
+                              onClick = { },
+                              modifier = Modifier.fillMaxWidth()
+                          ) {
+                              Text("Sign in")
+                          }
+
+                          HorizontalDivider()
+                          Text("Connection: Not connected")
+                          Text(
+                              "Cloud authentication is the next development stage.",
+                              style = MaterialTheme.typography.bodySmall
+                          )
+                      }
+                  }
+              }
+          }
+          EOF
+
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/gradle-build-action@v3
         with:
           gradle-version: '8.9'
 
       - name: Build APK
+        working-directory: econet
         run: gradle --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: econet-connect-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: econet/app/build/outputs/apk/debug/app-debug.apk
+
+
 
