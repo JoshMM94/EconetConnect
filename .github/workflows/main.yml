@@ -4,7 +4,8 @@ name: Build Econet Connect APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -73,19 +74,19 @@ jobs:
           }
 
           android {
-    namespace = "uk.co.econetconnect"
-    compileSdk = 35
+              namespace = "uk.co.econetconnect"
+              compileSdk = 35
 
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
 
-    defaultConfig {
+              defaultConfig {
                   applicationId = "uk.co.econetconnect"
                   minSdk = 26
                   targetSdk = 35
@@ -146,7 +147,9 @@ jobs:
           class MainActivity : ComponentActivity() {
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
-                  setContent { EconetConnectScreen() }
+                  setContent {
+                      EconetConnectScreen()
+                  }
               }
           }
 
@@ -171,9 +174,14 @@ jobs:
                               style = MaterialTheme.typography.headlineMedium,
                               fontWeight = FontWeight.Bold
                           )
+
                           Text("Service Edition")
                           HorizontalDivider()
-                          Text("Cloud account", style = MaterialTheme.typography.titleLarge)
+
+                          Text(
+                              "Cloud account",
+                              style = MaterialTheme.typography.titleLarge
+                          )
 
                           OutlinedTextField(
                               value = email,
@@ -208,6 +216,7 @@ jobs:
 
                           HorizontalDivider()
                           Text("Connection: Not connected")
+
                           Text(
                               "Cloud authentication is the next development stage.",
                               style = MaterialTheme.typography.bodySmall
@@ -232,6 +241,3 @@ jobs:
         with:
           name: econet-connect-debug
           path: econet/app/build/outputs/apk/debug/app-debug.apk
-
-
-
