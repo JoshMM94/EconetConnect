@@ -281,7 +281,7 @@ object EcoNetCloudApi {
                     Thread {
                         var mqtt: EcoNetMqttClient? = null
                         try {
-                            mqtt = EcoNetMqttClient(installationId, identityId, credentials, serviceRole)
+                            mqtt = EcoNetMqttClient(installationId, mqttUserId, credentials, serviceRole)
                             mqtt.connect()
                             val ping = mqtt.request(JSONObject().put("name", "CLIENT_PING"))
                             val pingStatus = ping.optInt("statusCode", 0)
@@ -367,11 +367,11 @@ object EcoNetCloudApi {
                     components.forEach { c ->
                         report.appendLine("- ${c.name}: serial=${c.serialNumber}, type=${c.componentType}, typeId=${c.componentTypeId}, producerCode=${c.producerCode}, hardware=${c.hardwareVersion}, software=${c.softwareVersion}, protocol=${c.protocol}")
                     }
-                    report.appendLine("Cognito identity ID present: ${identityId.isNotBlank()}")
+                    report.appendLine("Authenticated Cognito user ID present: ${mqttUserId.isNotBlank()}")
                     report.appendLine("Cognito groups: ${if (groups.isEmpty()) "(none in token)" else groups.joinToString()}")
                     report.appendLine("Credentials: temporary session credentials available (secret values deliberately excluded)")
                     try {
-                        val probe = EcoNetMqttClient(installationId, identityId, credentials,
+                        val probe = EcoNetMqttClient(installationId, mqttUserId, credentials,
                             groups.contains("ServiceCompanyManagers"))
                         report.appendLine()
                         report.appendLine("AWS IoT WebSocket handshake probe")
@@ -399,8 +399,8 @@ object EcoNetCloudApi {
                 val session = authSession as? AWSCognitoAuthSession
                     ?: throw IllegalStateException("Cognito session was not available.")
                 if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
-                val identityId = session.identityIdResult.value
-                    ?: throw IllegalStateException("Cognito Identity ID is unavailable.")
+                val mqttUserId = Amplify.Auth.getCurrentUser().userId
+                if (mqttUserId.isBlank()) throw IllegalStateException("Authenticated ecoNET user ID is unavailable.")
                 val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                     ?: throw IllegalStateException("AWS temporary credentials are unavailable.")
                 val groups = session.userPoolTokensResult.value?.idToken?.let { cognitoGroups(it) }.orEmpty()

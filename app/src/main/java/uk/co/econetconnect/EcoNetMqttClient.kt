@@ -1,6 +1,11 @@
 package uk.co.econetconnect
 
 import com.amplifyframework.auth.AWSTemporaryCredentials
+import com.amazonaws.DefaultRequest
+import com.amazonaws.auth.AWS4Signer
+import com.amazonaws.auth.BasicSessionCredentials
+import com.amazonaws.http.HttpMethodName
+import java.net.URI
 import org.eclipse.paho.client.mqttv3.IMqttActionListener
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken
 import org.eclipse.paho.client.mqttv3.MqttAsyncClient
@@ -33,7 +38,7 @@ import javax.crypto.spec.SecretKeySpec
  */
 class EcoNetMqttClient(
     private val installationId: String,
-    private val identityId: String,
+    private val mqttUserId: String,
     private val credentials: AWSTemporaryCredentials,
     private val serviceRole: Boolean = false,
     private val onNotification: (JSONObject) -> Unit = {}
@@ -46,7 +51,7 @@ class EcoNetMqttClient(
         private const val REQUEST_TIMEOUT_MS = 15_000L
     }
 
-    private val clientId = "$identityId-${System.currentTimeMillis()}"
+    private val clientId = "$mqttUserId-${System.currentTimeMillis()}"
     private val requestTopic = if (serviceRole) "$installationId/$clientId/serviceRequest" else "$installationId/$clientId/installationRequest"
     private val responseTopic = if (serviceRole) "$installationId/$clientId/serviceResponse" else "$installationId/$clientId/installationResponse"
     private val notificationTopic = if (serviceRole) "$installationId/$clientId/installationNotifications" else "$installationId/installationNotifications"
@@ -201,30 +206,26 @@ class EcoNetMqttClient(
     }
 
     private fun presignedWebSocketUrl(creds: AWSTemporaryCredentials): String {
-        val now = Date()
-        val date = SimpleDateFormat("yyyyMMdd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(now)
-        val timestamp = SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'", Locale.US).apply {
-            timeZone = TimeZone.getTimeZone("UTC")
-        }.format(now)
-        val scope = "$date/$REGION/$SERVICE/aws4_request"
-        val params = sortedMapOf(
-            "X-Amz-Algorithm" to "AWS4-HMAC-SHA256",
-            "X-Amz-Credential" to "${creds.accessKeyId}/$scope",
-            "X-Amz-Date" to timestamp,
-            "X-Amz-Expires" to "900",
-            "X-Amz-SignedHeaders" to "host"
+        // Use the same AWS SDK SigV4 presigner as the REST client. The official
+        // ecoNET web client delegates this to Amplify's AWS signer; hand-built
+        // canonical requests are too easy to subtly mismatch.
+        val request = DefaultRequest<Any>(SERVICE).apply {
+            setEndpoint(URI.create("https://$ENDPOINT"))
+            setResourcePath("/mqtt")
+            setHttpMethod(HttpMethodName.GET)
+        }
+        val awsCredentials = BasicSessionCredentials(
+            creds.accessKeyId, creds.secretAccessKey, creds.sessionToken
         )
-        val canonicalQuery = params.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
-        val canonicalHeaders = "host:$ENDPOINT\n"
-        val canonicalRequest = "GET\n/mqtt\n$canonicalQuery\n$canonicalHeaders\nhost\nUNSIGNED-PAYLOAD"
-        val hashedRequest = hex(sha256(canonicalRequest.toByteArray(StandardCharsets.UTF_8)))
-        val stringToSign = "AWS4-HMAC-SHA256\n$timestamp\n$scope\n$hashedRequest"
-        val kDate = hmac(("AWS4" + creds.secretAccessKey).toByteArray(StandardCharsets.UTF_8), date)
-        val kRegion = hmac(kDate, REGION)
-        val kService = hmac(kRegion, SERVICE)
-        val kSigning = hmac(kService, "aws4_request")
-        val signature = hex(hmac(kSigning, stringToSign))
-        return "wss://$ENDPOINT/mqtt?$canonicalQuery&X-Amz-Signature=$signature&X-Amz-Security-Token=${encode(creds.sessionToken)}"
+        val signer = AWS4Signer().apply {
+            setRegionName(REGION)
+            setServiceName(SERVICE)
+        }
+        signer.presignRequest(request, awsCredentials, Date(System.currentTimeMillis() + 900_000L))
+        val query = request.parameters.entries.joinToString("&") { (key, values) ->
+            values.joinToString("&") { value -> "${encode(key)}=${encode(value)}" }
+        }
+        return "wss://$ENDPOINT/mqtt?$query"
     }
 
     private fun encode(value: String): String =
