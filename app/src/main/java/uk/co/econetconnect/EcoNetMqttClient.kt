@@ -56,7 +56,7 @@ class EcoNetMqttClient(
         val uri = presignedWebSocketUrl(credentials)
         val client = MqttAsyncClient(uri, clientId, MemoryPersistence())
         val options = MqttConnectOptions().apply {
-            mqttVersion = MqttConnectOptions.MQTT_VERSION_3_1_1
+            mqttVersion = MqttConnectOptions.MQTT_VERSION_3_1
             isCleanSession = true
             keepAliveInterval = 60
             connectionTimeout = 30
@@ -157,7 +157,6 @@ class EcoNetMqttClient(
             "X-Amz-Credential" to "${creds.accessKeyId}/$scope",
             "X-Amz-Date" to timestamp,
             "X-Amz-Expires" to "900",
-            "X-Amz-Security-Token" to creds.sessionToken,
             "X-Amz-SignedHeaders" to "host"
         )
         val canonicalQuery = params.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
@@ -170,7 +169,7 @@ class EcoNetMqttClient(
         val kService = hmac(kRegion, SERVICE)
         val kSigning = hmac(kService, "aws4_request")
         val signature = hex(hmac(kSigning, stringToSign))
-        return "wss://$ENDPOINT/mqtt?$canonicalQuery&X-Amz-Signature=$signature"
+        return "wss://$ENDPOINT/mqtt?$canonicalQuery&X-Amz-Signature=$signature&X-Amz-Security-Token=${encode(creds.sessionToken)}"
     }
 
     private fun encode(value: String): String =
