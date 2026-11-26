@@ -82,7 +82,7 @@ private fun parseDashboard(source: String): DashboardValues {
 @Composable
 private fun EconetDashboardApp() {
     val context = LocalContext.current
-    var portalVisible by remember { mutableStateOf(false) }
+    var portalVisible by remember { mutableStateOf(true) }
     var capturedText by remember { mutableStateOf("") }
     var title by remember { mutableStateOf("No installation selected") }
     var pageStatus by remember { mutableStateOf("Sign in to the official portal to load live data") }
@@ -158,11 +158,24 @@ private fun EconetDashboardApp() {
     }
 
     MaterialTheme(colorScheme = lightColorScheme(
-        primary = Color(0xFF6650A4), background = Color(0xFFFFF7FC), surface = Color(0xFFFFF7FC)
+        primary = Color(0xFF006B3F),
+        onPrimary = Color.White,
+        primaryContainer = Color(0xFFFFF200),
+        onPrimaryContainer = Color(0xFF003B20),
+        secondary = Color(0xFFFFD500),
+        onSecondary = Color(0xFF003B20),
+        secondaryContainer = Color(0xFFE5F4E9),
+        onSecondaryContainer = Color(0xFF003B20),
+        tertiary = Color(0xFF008A45),
+        background = Color(0xFFFFFDF0),
+        surface = Color(0xFFFFFEF8),
+        surfaceVariant = Color(0xFFFFF9CC),
+        onSurface = Color(0xFF173B29),
+        onSurfaceVariant = Color(0xFF496353)
     )) {
         Scaffold(
             topBar = {
-                Row(Modifier.fillMaxWidth().background(Color(0xFFFFF7FC)).padding(16.dp),
+                Row(Modifier.fillMaxWidth().background(Color(0xFFFFFEF8)).padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     Column {
                         Text("Econet Connect", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -237,7 +250,7 @@ private fun capturePortalText(webView: WebView, callback: (String) -> Unit) {
 
 @Composable
 private fun DashboardSection(title: String, status: String?, content: @Composable ColumnScope.() -> Unit) {
-    ElevatedCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color.White)) {
+    ElevatedCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFFFFFEF8))) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -254,10 +267,10 @@ private fun MetricGrid(items: List<Pair<String, String>>) {
         items.chunked(2).forEach { group ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 group.forEach { (label, value) ->
-                    Surface(Modifier.weight(1f), color = Color(0xFFF7F2FA), shape = RoundedCornerShape(14.dp)) {
+                    Surface(Modifier.weight(1f), color = Color(0xFFFFF9CC), shape = RoundedCornerShape(14.dp)) {
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Text(label, style = MaterialTheme.typography.labelMedium, color = Color(0xFF625B71))
-                            Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Color(0xFF4F378B))
+                            Text(label, style = MaterialTheme.typography.labelMedium, color = Color(0xFF496353))
+                            Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Color(0xFF006B3F))
                         }
                     }
                 }
