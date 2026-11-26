@@ -85,6 +85,7 @@ object EcoNetCloudApi {
             .withZone(ZoneOffset.UTC).format(now)
 
         val payloadHash = sha256Hex("")
+        // Header order must match the lexicographically sorted SigV4 SignedHeaders list below.
         val canonicalHeaders = "appid:$APP_ID\nhost:$API_HOST\nx-amz-date:$amzDate\nx-amz-security-token:${credentials.sessionToken.trim()}\n"
         val signedHeaders = "appid;host;x-amz-date;x-amz-security-token"
         val canonicalRequest = "GET\n$API_PATH\n\n$canonicalHeaders$signedHeaders\n$payloadHash"
