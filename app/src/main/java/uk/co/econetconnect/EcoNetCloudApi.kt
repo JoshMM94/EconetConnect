@@ -1,6 +1,5 @@
 package uk.co.econetconnect
 
-import com.amplifyframework.auth.AuthSessionResult
 import com.amplifyframework.auth.AWSTemporaryCredentials
 import com.amplifyframework.auth.cognito.AWSCognitoAuthSession
 import com.amplifyframework.core.Amplify
@@ -49,14 +48,8 @@ object EcoNetCloudApi {
                         throw IllegalStateException("The ecoNET Cloud session is no longer signed in. Please sign in again.")
                     }
                     val credentialsResult = session.awsCredentialsResult
-                    if (credentialsResult.type != AuthSessionResult.Type.SUCCESS) {
-                        throw IllegalStateException(
-                            credentialsResult.error?.localizedMessage
-                                ?: "AWS temporary credentials could not be obtained. Check the Cognito Identity Pool configuration."
-                        )
-                    }
                     val credentials = credentialsResult.value as? AWSTemporaryCredentials
-                        ?: throw IllegalStateException("AWS temporary credentials were returned in an unexpected format.")
+                        ?: throw IllegalStateException("AWS temporary credentials could not be obtained. Check the Cognito Identity Pool configuration.")
 
                     Thread {
                         try {
