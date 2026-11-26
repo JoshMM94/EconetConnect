@@ -354,8 +354,8 @@ object EcoNetCloudApi {
                 val session = authSession as? AWSCognitoAuthSession
                     ?: throw IllegalStateException("Cognito session unavailable.")
                 if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
-                val identityId = session.identityIdResult.value
-                    ?: throw IllegalStateException("Cognito Identity ID unavailable.")
+                val mqttUserId = Amplify.Auth.getCurrentUser().userId
+                if (mqttUserId.isBlank()) throw IllegalStateException("Authenticated ecoNET user ID unavailable.")
                 val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                     ?: throw IllegalStateException("AWS temporary credentials unavailable.")
                 val groups = session.userPoolTokensResult.value?.idToken?.let { cognitoGroups(it) }.orEmpty()
@@ -410,7 +410,7 @@ object EcoNetCloudApi {
                 Thread {
                     var mqtt: EcoNetMqttClient? = null
                     try {
-                        mqtt = EcoNetMqttClient(installationId, identityId, credentials, serviceRole)
+                        mqtt = EcoNetMqttClient(installationId, mqttUserId, credentials, serviceRole)
                         mqtt.connect()
                         val ping = mqtt.request(JSONObject().put("name", "CLIENT_PING"))
                         if (ping.optInt("statusCode", 0) != 0) throw IllegalStateException("CLIENT_PING was not acknowledged.")
