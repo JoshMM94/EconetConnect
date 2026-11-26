@@ -362,38 +362,63 @@ object EcoNetCloudApi {
                 val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                     ?: throw IllegalStateException("AWS temporary credentials unavailable.")
                 val groups = cognitoGroups(idToken)
+                val userPoolSub = cognitoSubject(idToken)
+                    ?: throw IllegalStateException("Cognito User Pool sub unavailable.")
+                val identityId = session.identityIdResult.value
+                    ?: throw IllegalStateException("Cognito Identity Pool identity ID unavailable.")
                 val serviceRole = groups.contains("ServiceCompanyManagers")
-                val mqttClientId = if (serviceRole) {
-                    cognitoSubject(idToken) ?: throw IllegalStateException("Authenticated Cognito subject unavailable.")
-                } else {
-                    cognitoSubject(idToken)
-                        ?: throw IllegalStateException("Authenticated Cognito user ID (sub) is unavailable.")
-                }
                 Thread {
                     val report = StringBuilder()
-                    report.appendLine("Econet Connect transport diagnostics")
+                    report.appendLine("Econet Connect transport diagnostics · expanded")
                     report.appendLine("Installation ID: $installationId")
                     report.appendLine("Components returned by installation API: ${components.size}")
                     components.forEach { c ->
                         report.appendLine("- ${c.name}: serial=${c.serialNumber}, type=${c.componentType}, typeId=${c.componentTypeId}, producerCode=${c.producerCode}, hardware=${c.hardwareVersion}, software=${c.softwareVersion}, protocol=${c.protocol}")
                     }
-                    report.appendLine("Cognito Identity Pool identity ID present: ${session.identityIdResult.value?.isNotBlank() == true}")
-                    report.appendLine("MQTT identity selected: DEFAULT Cognito Identity Pool identity ID (official userId path)")
+                    report.appendLine()
+                    report.appendLine("AUTH SESSION")
+                    report.appendLine("Signed in: ${session.isSignedIn}")
                     report.appendLine("Cognito groups: ${if (groups.isEmpty()) "(none in token)" else groups.joinToString()}")
-                    report.appendLine("Credentials: temporary session credentials available (secret values deliberately excluded)")
-                    try {
-                        val probe = EcoNetMqttClient(installationId, mqttClientId, credentials, serviceRole)
-                        report.appendLine()
-                        report.appendLine("AWS IoT WebSocket handshake probe")
-                        report.append(probe.diagnoseWebSocketHandshake())
-                        probe.disconnect()
-                    } catch (e: Exception) {
-                        report.appendLine("Probe setup failed: ${e.message}")
+                    report.appendLine("ServiceCompanyManagers role: $serviceRole")
+                    report.appendLine("Identity Pool identity ID: …${identityId.takeLast(8)} (length ${identityId.length})")
+                    report.appendLine("User Pool sub: …${userPoolSub.takeLast(8)} (length ${userPoolSub.length})")
+                    report.appendLine("Temporary AWS credentials: available")
+                    report.appendLine("Access key ID suffix: …${credentials.accessKeyId.takeLast(4)}")
+                    report.appendLine("Session token: present=${credentials.sessionToken.isNotBlank()}, length=${credentials.sessionToken.length}")
+                    report.appendLine("Identity source used by normal DEFAULT connection: ${if (serviceRole) "User Pool sub (service role)" else "Identity Pool identity ID"}")
+                    report.appendLine()
+                    report.appendLine("CONTROLLED WEBSOCKET PROBE MATRIX")
+                    val probes = if (serviceRole) {
+                        listOf(Triple("Service role / User Pool sub / Origin", userPoolSub, true),
+                            Triple("Identity Pool ID comparison / Origin", identityId, true))
+                    } else {
+                        listOf(Triple("DEFAULT / Identity Pool ID / Origin (official path)", identityId, true),
+                            Triple("Comparison only / User Pool sub / Origin", userPoolSub, true),
+                            Triple("DEFAULT / Identity Pool ID / no Origin header", identityId, false))
                     }
+                    probes.forEachIndexed { index, probeSpec ->
+                        if (index > 0) Thread.sleep(1200)
+                        report.appendLine()
+                        report.appendLine("----- PROBE ${index + 1}: ${probeSpec.first} -----")
+                        try {
+                            val probe = EcoNetMqttClient(installationId, probeSpec.second, credentials, serviceRole)
+                            report.appendLine(probe.diagnoseWebSocketHandshake(probeSpec.first, probeSpec.third))
+                            probe.disconnect()
+                        } catch (e: Exception) {
+                            report.appendLine("Probe setup failed: ${e.javaClass.simpleName}: ${e.message}")
+                        }
+                    }
+                    report.appendLine()
+                    report.appendLine("INTERPRETATION")
+                    report.appendLine("- HTTP 101 means the WebSocket upgrade succeeded; MQTT protocol/auth is the next layer.")
+                    report.appendLine("- HTTP 403 on both identities suggests signing, endpoint policy, or account authorization; this app cannot inspect Econet's IAM policy.")
+                    report.appendLine("- Identity Pool ID succeeds while User Pool sub fails confirms the identity-selection issue.")
+                    report.appendLine("- Origin-only difference isolates whether Econet's gateway is applying an Origin restriction.")
+                    report.appendLine("No MQTT publish, subscription, registration, or controller write was attempted by these probes.")
                     Handler(Looper.getMainLooper()).post { onSuccess(report.toString()) }
                 }.start()
             } catch (e: Exception) {
-                onError(e.message ?: "Could not prepare transport diagnostics.")
+                onError(e.message ?: "Could not prepare expanded transport diagnostics.")
             }
         }, { e -> onError(e.localizedMessage ?: "Could not retrieve authenticated AWS session.") })
     }
