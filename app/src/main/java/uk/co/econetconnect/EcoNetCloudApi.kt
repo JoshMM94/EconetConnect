@@ -265,12 +265,13 @@ object EcoNetCloudApi {
                     val session = authSession as? AWSCognitoAuthSession
                         ?: throw IllegalStateException("Cognito session was not available.")
                     if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
-                    val identityId = session.identityIdResult.value
-                        ?: throw IllegalStateException("Cognito Identity ID is unavailable. Check the Identity Pool configuration.")
+                    val idToken = session.userPoolTokensResult.value?.idToken
+                        ?: throw IllegalStateException("Cognito ID token is unavailable.")
+                    val mqttUserId = cognitoSubject(idToken)
+                        ?: throw IllegalStateException("Authenticated Cognito user ID (sub) is unavailable.")
                     val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                         ?: throw IllegalStateException("AWS temporary credentials could not be obtained.")
-                    val idToken = session.userPoolTokensResult.value?.idToken
-                    val groups = idToken?.let { cognitoGroups(it) }.orEmpty()
+                    val groups = cognitoGroups(idToken)
                     // ecoNET maps ServiceCompanyManagers to SERVICE_ADMIN (role 10).
                     // The official web client uses serviceRequest/serviceResponse for this role.
                     val serviceRole = groups.contains("ServiceCompanyManagers")
@@ -354,11 +355,13 @@ object EcoNetCloudApi {
                 val session = authSession as? AWSCognitoAuthSession
                     ?: throw IllegalStateException("Cognito session unavailable.")
                 if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
-                val mqttUserId = Amplify.Auth.getCurrentUser().userId
-                if (mqttUserId.isBlank()) throw IllegalStateException("Authenticated ecoNET user ID unavailable.")
+                val idToken = session.userPoolTokensResult.value?.idToken
+                    ?: throw IllegalStateException("Cognito ID token unavailable.")
+                val mqttUserId = cognitoSubject(idToken)
+                    ?: throw IllegalStateException("Authenticated Cognito user ID (sub) unavailable.")
                 val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                     ?: throw IllegalStateException("AWS temporary credentials unavailable.")
-                val groups = session.userPoolTokensResult.value?.idToken?.let { cognitoGroups(it) }.orEmpty()
+                val groups = cognitoGroups(idToken)
                 Thread {
                     val report = StringBuilder()
                     report.appendLine("Econet Connect transport diagnostics")
@@ -399,8 +402,10 @@ object EcoNetCloudApi {
                 val session = authSession as? AWSCognitoAuthSession
                     ?: throw IllegalStateException("Cognito session was not available.")
                 if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
-                val mqttUserId = Amplify.Auth.getCurrentUser().userId
-                if (mqttUserId.isBlank()) throw IllegalStateException("Authenticated ecoNET user ID is unavailable.")
+                val idToken = session.userPoolTokensResult.value?.idToken
+                    ?: throw IllegalStateException("Cognito ID token unavailable.")
+                val mqttUserId = cognitoSubject(idToken)
+                    ?: throw IllegalStateException("Authenticated Cognito user ID (sub) unavailable.")
                 val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                     ?: throw IllegalStateException("AWS temporary credentials are unavailable.")
                 val groups = session.userPoolTokensResult.value?.idToken?.let { cognitoGroups(it) }.orEmpty()
@@ -460,7 +465,7 @@ object EcoNetCloudApi {
         }, { error -> onError(error.localizedMessage ?: "Could not retrieve authenticated AWS session.") })
     }
 
-    private fun cognitoGroups(idToken: String): List<String> {
+    private fun cognitoSubject(idToken: String): String? = try {\n        val payload = idToken.split(".").getOrNull(1) ?: return null\n        val decoded = String(android.util.Base64.decode(payload + "=".repeat((4 - payload.length % 4) % 4), android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP), Charsets.UTF_8)\n        JSONObject(decoded).optString("sub").takeIf { it.isNotBlank() }\n    } catch (_: Exception) { null }\n\n    private fun cognitoGroups(idToken: String): List<String> {
         return try {
             val payload = idToken.split(".").getOrNull(1) ?: return emptyList()
             val decoded = String(android.util.Base64.decode(
