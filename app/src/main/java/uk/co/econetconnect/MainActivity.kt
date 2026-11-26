@@ -1,434 +1,266 @@
 package uk.co.econetconnect
 
+import android.annotation.SuppressLint
+import android.content.Intent
+import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Bundle
+import android.webkit.CookieManager
+import android.webkit.SslErrorHandler
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
-import com.amplifyframework.core.Amplify
-import com.amplifyframework.auth.cognito.AWSCognitoAuthPlugin
+import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.delay
+import org.json.JSONTokener
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+private const val ECONET_PORTAL = "https://cloud.grant.eu"
 
 class MainActivity : ComponentActivity() {
-    private var amplifyReady = false
-    private var initializationError: String? = null
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        try {
-            Amplify.addPlugin(AWSCognitoAuthPlugin())
-            Amplify.configure(applicationContext)
-            amplifyReady = true
-        } catch (error: Exception) {
-            initializationError = error.localizedMessage ?: "Could not initialize secure cloud authentication."
-        }
-
-        setContent {
-            EconetConnectScreen(
-                amplifyReady = amplifyReady,
-                initializationError = initializationError
-            )
-        }
+        setContent { EconetDashboardApp() }
     }
 }
 
-@Composable
-private fun CircuitHomeScreen(
-    installationName: String,
-    circuitLabel: String,
-    connectionLabel: String,
-    profileLabel: String
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Home", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text(installationName, style = MaterialTheme.typography.bodyMedium)
-        Text(circuitLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text(connectionLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-        Text(profileLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+private data class DashboardValues(
+    val state: String, val flow: String, val ret: String, val rate: String,
+    val compressor: String, val fan: String, val hpSet: String,
+    val room: String, val roomTarget: String, val curve: String,
+    val roomSet: String, val hysteresis: String, val dhw: String, val dhwTarget: String
+)
 
-        ParameterHomeCard("Target Room Temp", "Not loaded yet", "Requested room temperature setpoint")
-        ParameterHomeCard("Current Room Temp", "Not loaded yet", "Measured room temperature")
-        ParameterHomeCard("Hysteresis", "Not loaded yet", "Room temperature switching differential")
-        ParameterHomeCard("Weather Compensation", "Not loaded yet", "Heating curve and curve shift")
-    }
-}
-
-@Composable
-private fun ParameterHomeCard(
-    title: String,
-    value: String,
-    description: String
-) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(value, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
-            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+private fun parseDashboard(source: String): DashboardValues {
+    fun find(vararg aliases: String): String {
+        val lines = source.lines().map { it.trim().replace(Regex("\\s+"), " ") }.filter { it.isNotBlank() }
+        for (i in lines.indices) for (alias in aliases) {
+            val match = Regex("(?i)^.*?${Regex.escape(alias)}\\s*(?::|=|—|-)?\\s*(.+?)\\s*$").find(lines[i])
+            if (match != null && match.groupValues[1].isNotBlank()) return match.groupValues[1].take(48)
+            if (lines[i].equals(alias, true) && i + 1 < lines.size && lines[i + 1].length < 64) return lines[i + 1]
         }
+        return "Not detected"
     }
+    return DashboardValues(
+        find("Heat pump status", "Operating status", "Device status", "On/Off", "Running state", "Status"),
+        find("Flow temperature", "Flow temp", "Leaving water temperature", "LWT"),
+        find("Return temperature", "Return temp", "Entering water temperature", "RWT"),
+        find("Flow rate", "Water flow", "Water flow rate"),
+        find("Compressor frequency", "Compressor freq", "Compressor Hz", "Compressor speed"),
+        find("Fan RPM", "Fan speed", "Fan rotation speed"),
+        find("Flow set temperature", "Flow target", "Water setpoint", "Heating set temperature", "Set temperature"),
+        find("Room temperature", "Current room temperature", "Room temp"),
+        find("Room temperature target", "Target room temperature", "Room target"),
+        find("Weather curve", "Heating curve", "Compensation curve"),
+        find("Room setpoint", "Requested room temperature", "Target room temp"),
+        find("Hysteresis", "Room hysteresis", "Temperature hysteresis"),
+        find("DHW temperature", "Hot water temperature", "Domestic hot water temperature", "Tank temperature"),
+        find("DHW target", "Hot water target", "DHW set temperature", "Domestic hot water setpoint")
+    )
 }
 
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun EconetConnectScreen(
-    amplifyReady: Boolean,
-    initializationError: String?
-) {
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var verificationCode by remember { mutableStateOf("") }
-    var isLoading by remember { mutableStateOf(false) }
-    var awaitingChallenge by remember { mutableStateOf(false) }
-    var isSignedIn by remember { mutableStateOf(false) }
-    var installations by remember { mutableStateOf<List<EcoNetInstallation>>(emptyList()) }
-    var installationsLoaded by remember { mutableStateOf(false) }
-    var selectedInstallation by remember { mutableStateOf<EcoNetInstallation?>(null) }
-    var installationDetails by remember { mutableStateOf<EcoNetInstallationDetails?>(null) }
-    var controllerProfiles by remember { mutableStateOf<List<EcoNetControllerProfile>>(emptyList()) }
-    var profileStatus by remember { mutableStateOf("Controller profile not loaded") }
-    var mqttStatus by remember { mutableStateOf("MQTT not connected") }
-    var parameterDump by remember { mutableStateOf("") }
-    var diagnosticReport by remember { mutableStateOf("") }
-    var diagnosticStatus by remember { mutableStateOf("Diagnostics not run") }
-    var isDiagnosing by remember { mutableStateOf(false) }
-    var dumpStatus by remember { mutableStateOf("No parameter dump retrieved yet") }
-    var isDumping by remember { mutableStateOf(false) }
-    val clipboard = LocalClipboardManager.current
-    var status by remember { mutableStateOf(initializationError ?: "Not connected") }
+private fun EconetDashboardApp() {
+    val context = LocalContext.current
+    var portalVisible by remember { mutableStateOf(true) }
+    var capturedText by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf("ecoNET Cloud") }
+    var pageStatus by remember { mutableStateOf("Opening official ecoNET Cloud…") }
+    var lastRead by remember { mutableStateOf("Waiting for portal data") }
+    var pageError by remember { mutableStateOf("") }
 
-    fun showError(message: String) {
-        isLoading = false
-        status = message
-    }
-
-    fun openInstallation(installation: EcoNetInstallation) {
-        selectedInstallation = installation
-        installationDetails = null
-        controllerProfiles = emptyList()
-        profileStatus = "Loading controller profile…"
-        isLoading = true
-        status = "Opening installation and retrieving configuration…"
-        EcoNetCloudApi.fetchInstallationDetails(
-            installation.id,
-            onSuccess = { details ->
-                installationDetails = details
-                status = "Installation details retrieved. Connecting MQTT and registering components…"
-                mqttStatus = "Connecting to AWS IoT MQTT…"
-                EcoNetCloudApi.connectAndRegisterComponents(
-                    installationId = installation.id,
-                    components = details.components,
-                    onSuccess = { result -> mqttStatus = result },
-                    onError = { message -> mqttStatus = "MQTT / registration failed: $message" }
-                )
-                profileStatus = "Loading profiles for discovered components…"
-                EcoNetCloudApi.fetchControllerProfiles(
-                    details.components,
-                    onSuccess = { profiles ->
-                        controllerProfiles = profiles
-                        profileStatus = "Loaded ${profiles.size} controller profile(s)"
-                        isLoading = false
-                    },
-                    onError = { message ->
-                        profileStatus = message
-                        isLoading = false
-                    }
-                )
-            },
-            onError = { message -> isLoading = false; status = message }
-        )
-    }
-
-    fun loadInstallations() {
-        isLoading = true
-        installationsLoaded = false
-        status = "Retrieving installations securely from ecoNET Cloud…"
-        EcoNetCloudApi.fetchInstallations(
-            onSuccess = { result ->
-                installations = result
-                installationsLoaded = true
-                isLoading = false
-                status = if (result.isEmpty()) {
-                    "Cloud connection succeeded, but this account returned no installations."
-                } else {
-                    "Retrieved ${result.size} installation(s) from ecoNET Cloud."
-                }
-            },
-            onError = { message ->
-                isLoading = false
-                status = message
-            }
-        )
-    }
-
-    MaterialTheme {
-        Scaffold { padding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Text(
-                    "Econet Connect",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Text("Service Edition · Cloud connection")
-                HorizontalDivider()
-
-                if (selectedInstallation != null) {
-                    val selected = selectedInstallation!!
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        TextButton(onClick = { selectedInstallation = null; installationDetails = null; status = "Installation list" }) {
-                            Text("← Installations")
-                        }
-                        TextButton(onClick = { openInstallation(selected) }, enabled = !isLoading) { Text("Refresh") }
-                    }
-                    Text(installationDetails?.name ?: selected.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Serial: ${selected.factoryNumber}")
-                    if (isLoading && installationDetails == null) CircularProgressIndicator()
-                    installationDetails?.let { details ->
-                        Button(
-                            onClick = {
-                                isDumping = true
-                                dumpStatus = "Connecting and requesting raw parameter tables…"
-                                parameterDump = ""
-                                EcoNetCloudApi.fetchParameterTableDump(
-                                    selected.id, details.components,
-                                    onSuccess = { result ->
-                                        parameterDump = result
-                                        dumpStatus = "Parameter dump received. Copy it and paste it into this chat."
-                                        isDumping = false
-                                    },
-                                    onError = { message ->
-                                        dumpStatus = "Parameter dump failed: $message"
-                                        isDumping = false
-                                    }
-                                )
-                            },
-                            enabled = !isDumping,
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text(if (isDumping) "Retrieving parameter dump…" else "Retrieve parameter dump") }
-                        Button(
-                            onClick = {
-                                isDiagnosing = true
-                                diagnosticStatus = "Running signed WebSocket handshake and installation metadata checks…"
-                                diagnosticReport = ""
-                                EcoNetCloudApi.runTransportDiagnostics(
-                                    selected.id, details.components,
-                                    onSuccess = { result ->
-                                        diagnosticReport = result
-                                        diagnosticStatus = "Diagnostics complete. Copy the report and paste it into this chat."
-                                        isDiagnosing = false
-                                    },
-                                    onError = { error ->
-                                        diagnosticStatus = "Diagnostics failed to run: $error"
-                                        isDiagnosing = false
-                                    }
-                                )
-                            },
-                            enabled = !isDiagnosing,
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text(if (isDiagnosing) "Running diagnostics…" else "Run full connection diagnostics") }
-                        Text(diagnosticStatus, style = MaterialTheme.typography.bodySmall)
-                        if (diagnosticReport.isNotBlank()) {
-                            Button(onClick = { clipboard.setText(AnnotatedString(diagnosticReport)) }) {
-                                Text("Copy diagnostic report")
-                            }
-                            Text(diagnosticReport.take(1400) + if (diagnosticReport.length > 1400) "\\n… preview truncated; copy the full report above." else "",
-                                style = MaterialTheme.typography.bodySmall)
-                        }
-                        Text("Diagnostics · read-only", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Text(dumpStatus, style = MaterialTheme.typography.bodySmall)
-                        if (parameterDump.isNotBlank()) {
-                            Button(onClick = { clipboard.setText(AnnotatedString(parameterDump)) }) {
-                                Text("Copy full parameter dump")
-                            }
-                            Text("Descriptions will be matched from controller profiles where available; unmatched entries remain raw IDs and values.", style = MaterialTheme.typography.bodySmall)
-                            Text(parameterDump.take(1600) + if (parameterDump.length > 1600) "\n… preview truncated; copy the full dump above." else "",
-                                style = MaterialTheme.typography.bodySmall)
-                        }
-                        CircuitHomeScreen(
-                            installationName = details.name,
-                            circuitLabel = "Circuit 2",
-                            connectionLabel = if (details.connected) "Installation connected" else "Installation offline",
-                            profileLabel = "$profileStatus\\n$mqttStatus"
-                        )
-                    }
-                } else if (isSignedIn) {
-                    Text("Cloud account", style = MaterialTheme.typography.titleLarge)
-                    Text("Signed in as $email")
-                    Button(
-                        onClick = { loadInstallations() },
-                        enabled = !isLoading,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        if (isLoading) {
-                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        } else {
-                            Text(if (installationsLoaded) "Refresh installations" else "Load installations")
-                        }
-                    }
-
-                    if (installationsLoaded && installations.isEmpty()) {
-                        Text("No installations were returned for this account.")
-                    }
-
-                    installations.forEach { installation ->
-                        ElevatedCard(modifier = Modifier.fillMaxWidth().clickable(enabled = !isLoading) { openInstallation(installation) }) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text(installation.name, style = MaterialTheme.typography.titleMedium)
-                                Text("Serial: ${installation.factoryNumber}")
-                                if (installation.address.isNotBlank()) Text(installation.address)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text(if (installation.connected) "Connected" else "Not connected")
-                                    if (installation.hasAlarms) Text("· Alarms present")
-                                }
-                                if (installation.softwareVersion.isNotBlank()) {
-                                    Text("Software: ${installation.softwareVersion}")
-                                }
-                            }
-                        }
-                    }
-
-                    Button(
-                        onClick = {
-                            Amplify.Auth.signOut { _ ->
-                                isSignedIn = false
-                                email = ""
-                                installations = emptyList()
-                                installationsLoaded = false
-                                status = "Signed out"
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-                    ) { Text("Sign out") }
-                } else {
-                    Text("Cloud account", style = MaterialTheme.typography.titleLarge)
-                    OutlinedTextField(
-                        value = email,
-                        onValueChange = { email = it },
-                        label = { Text("Email address") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                        enabled = amplifyReady && !isLoading,
-                        modifier = Modifier.fillMaxWidth()
+    val webView = remember {
+        WebView(context).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.databaseEnabled = true
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
+            settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            CookieManager.getInstance().setAcceptCookie(true)
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            webChromeClient = WebChromeClient()
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    val uri = request.url
+                    val host = uri.host.orEmpty().lowercase(Locale.ROOT)
+                    val allowed = uri.scheme == "https" && (
+                        host == "cloud.grant.eu" || host.endsWith(".grant.eu") ||
+                        host == "econetcloud.eu" || host.endsWith(".econetcloud.eu") ||
+                        host.endsWith(".amazoncognito.com") || host.endsWith(".amazonaws.com")
                     )
-
-                    if (!awaitingChallenge) {
-                        OutlinedTextField(
-                            value = password,
-                            onValueChange = { password = it },
-                            label = { Text("Password") },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            enabled = amplifyReady && !isLoading,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    } else {
-                        OutlinedTextField(
-                            value = verificationCode,
-                            onValueChange = { verificationCode = it },
-                            label = { Text("Verification code") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            enabled = !isLoading,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                    if (allowed) return false
+                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+                    return true
+                }
+                override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                    pageStatus = "Loading official portal…"
+                    pageError = ""
+                }
+                override fun onPageFinished(view: WebView, url: String) {
+                    title = view.title?.takeIf { it.isNotBlank() } ?: "ecoNET Cloud"
+                    pageStatus = "Portal loaded"
+                    capturePortalText(view) { text ->
+                        capturedText = text
+                        lastRead = "Captured " + SimpleDateFormat("HH:mm:ss", Locale.UK).format(Date())
                     }
+                }
+                override fun onReceivedError(view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError) {
+                    if (request.isForMainFrame) {
+                        pageError = error.description?.toString() ?: "Portal could not be loaded."
+                        pageStatus = "Portal loading failed"
+                    }
+                }
+                override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: android.net.http.SslError) {
+                    handler.cancel()
+                    pageError = "Secure connection validation failed. The page was blocked."
+                    pageStatus = "Secure connection blocked"
+                }
+            }
+            loadUrl(ECONET_PORTAL)
+        }
+    }
 
-                    Button(
-                        onClick = {
-                            if (!amplifyReady) {
-                                showError(initializationError ?: "Authentication is unavailable.")
-                            } else if (awaitingChallenge) {
-                                if (verificationCode.isBlank()) {
-                                    showError("Enter the verification code sent by ecoNET.")
-                                } else {
-                                    isLoading = true
-                                    Amplify.Auth.confirmSignIn(
-                                        verificationCode.trim(),
-                                        { result ->
-                                            isLoading = false
-                                            if (result.isSignedIn) {
-                                                isSignedIn = true
-                                                awaitingChallenge = false
-                                                password = ""
-                                                verificationCode = ""
-                                                status = "Signed in. Retrieving your installations…"
-                                                loadInstallations()
-                                            } else {
-                                                awaitingChallenge = true
-                                                status = "Another sign-in step is required: ${result.nextStep.signInStep}"
-                                            }
-                                        },
-                                        { error -> showError(error.localizedMessage ?: "Verification failed.") }
-                                    )
-                                }
-                            } else if (email.isBlank() || password.isBlank()) {
-                                showError("Enter your ecoNET email address and password.")
-                            } else {
-                                isLoading = true
-                                status = "Connecting securely to ecoNET Cloud…"
-                                Amplify.Auth.signIn(
-                                    email.trim(),
-                                    password,
-                                    { result ->
-                                        isLoading = false
-                                        if (result.isSignedIn) {
-                                            isSignedIn = true
-                                            password = ""
-                                            status = "Signed in. Retrieving your installations…"
-                                            loadInstallations()
-                                        } else {
-                                            awaitingChallenge = true
-                                            status = "Your account requires another sign-in step: ${result.nextStep.signInStep}"
-                                        }
-                                    },
-                                    { error -> showError(error.localizedMessage ?: "Sign-in failed.") }
-                                )
+    fun capture() {
+        capturePortalText(webView) { text ->
+            capturedText = text
+            lastRead = "Captured " + SimpleDateFormat("HH:mm:ss", Locale.UK).format(Date())
+            pageStatus = if (text.isBlank()) "No readable page text yet" else "Portal data captured"
+        }
+    }
+
+    BackHandler(enabled = !portalVisible) { portalVisible = true }
+    LaunchedEffect(portalVisible, webView) {
+        while (true) {
+            if (!portalVisible) capture()
+            delay(5000)
+        }
+    }
+
+    MaterialTheme(colorScheme = lightColorScheme(
+        primary = Color(0xFF6650A4), background = Color(0xFFFFF7FC), surface = Color(0xFFFFF7FC)
+    )) {
+        Scaffold(
+            topBar = {
+                Row(Modifier.fillMaxWidth().background(Color(0xFFFFF7FC)).padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column {
+                        Text("Econet Connect", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("Service Edition · Cloud dashboard", style = MaterialTheme.typography.bodySmall)
+                    }
+                    TextButton(onClick = { if (portalVisible) webView.reload() else capture() }) {
+                        Text(if (portalVisible) "Reload" else "Refresh")
+                    }
+                }
+            },
+            bottomBar = {
+                NavigationBar {
+                    NavigationBarItem(selected = !portalVisible, onClick = { portalVisible = false }, icon = { Text("⌂") }, label = { Text("Dashboard") })
+                    NavigationBarItem(selected = portalVisible, onClick = { portalVisible = true }, icon = { Text("◎") }, label = { Text("Econet portal") })
+                }
+            }
+        ) { padding ->
+            if (portalVisible) {
+                Column(Modifier.fillMaxSize().padding(padding)) {
+                    if (pageError.isNotBlank()) Text(pageError, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp))
+                    AndroidView(factory = { webView }, modifier = Modifier.fillMaxSize())
+                }
+            } else {
+                Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text("LIVE INSTALLATION", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+                    Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("$pageStatus · $lastRead", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                    if (capturedText.isBlank()) {
+                        ElevatedCard(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("Connect to your installation", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                Text("Open the Econet portal, sign in, select your installation and open its live controller page. Return here to read the values visible in the portal.")
+                                Button(onClick = { portalVisible = true }) { Text("Open Econet portal") }
                             }
-                        },
-                        enabled = amplifyReady && !isLoading,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        if (isLoading) {
-                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        } else {
-                            Text(if (awaitingChallenge) "Confirm code" else "Sign in")
+                        }
+                    } else {
+                        val v = remember(capturedText) { parseDashboard(capturedText) }
+                        DashboardSection("HEAT PUMP", v.state) {
+                            MetricGrid(listOf("Flow" to v.flow, "Return" to v.ret, "Flow rate" to v.rate,
+                                "Compressor frequency" to v.compressor, "Fan RPM" to v.fan, "Set temp" to v.hpSet))
+                        }
+                        DashboardSection("ROOM HEATING", null) {
+                            MetricGrid(listOf("Room temp" to v.room, "Room target" to v.roomTarget,
+                                "Weather curve" to v.curve, "Set temp" to v.roomSet, "Hysteresis" to v.hysteresis))
+                        }
+                        DashboardSection("HOT WATER", null) {
+                            MetricGrid(listOf("Hot water temp" to v.dhw, "Hot water target" to v.dhwTarget))
+                        }
+                        Text("Source: official ecoNET portal · $lastRead", style = MaterialTheme.typography.bodySmall)
+                        OutlinedButton(onClick = { portalVisible = true }, modifier = Modifier.fillMaxWidth()) { Text("Return to Econet portal") }
+                        Text("Captured portal text (diagnostic)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text(capturedText.take(1800), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                    }
+                }
+                // Keep the signed-in portal and its cookies alive behind the dashboard.
+                AndroidView(factory = { webView }, modifier = Modifier.size(1.dp))
+            }
+        }
+    }
+}
+
+private fun capturePortalText(webView: WebView, callback: (String) -> Unit) {
+    webView.post {
+        webView.evaluateJavascript("(function(){return document.body ? document.body.innerText : '';})()") { result ->
+            val text = try { JSONTokener(result ?: "\"\"").nextValue() as? String ?: "" } catch (_: Exception) { "" }
+            callback(text)
+        }
+    }
+}
+
+@Composable
+private fun DashboardSection(title: String, status: String?, content: @Composable ColumnScope.() -> Unit) {
+    ElevatedCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color.White)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                if (status != null) Text(status, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            }
+            content()
+        }
+    }
+}
+
+@Composable
+private fun MetricGrid(items: List<Pair<String, String>>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        items.chunked(2).forEach { group ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                group.forEach { (label, value) ->
+                    Surface(Modifier.weight(1f), color = Color(0xFFF7F2FA), shape = RoundedCornerShape(14.dp)) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text(label, style = MaterialTheme.typography.labelMedium, color = Color(0xFF625B71))
+                            Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Color(0xFF4F378B))
                         }
                     }
                 }
-
-                HorizontalDivider()
-                Text("Connection", style = MaterialTheme.typography.titleMedium)
-                Text(status, style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    "Your password is entered directly into the app. Authentication is handled by AWS Cognito; credentials are not sent to this development project or displayed in logs.",
-                    style = MaterialTheme.typography.bodySmall
-                )
+                if (group.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }
