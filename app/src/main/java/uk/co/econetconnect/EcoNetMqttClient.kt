@@ -123,7 +123,6 @@ class EcoNetMqttClient(
         }.joinToString("&")
         val credentialScope = queryParts.firstOrNull { it.startsWith("X-Amz-Credential=") }
             ?.substringAfter("=")?.substringAfter("%2F", "")?.replace("%2F", "/")
-            ?.substringAfter("/", "")
             ?: "(not present)"
         val latch = CountDownLatch(1)
         var outcome = "No WebSocket response received."
@@ -146,7 +145,7 @@ class EcoNetMqttClient(
                     .mapNotNull { name -> response?.header(name)?.let { "$name=$it" } }
                     .joinToString("; ").ifBlank { "(none returned)" }
                 val body = try { response?.body?.string().orEmpty().take(1200) } catch (_: Exception) { "" }
-                val safeBody = body.replace(Regex("(?i)(X-Amz-Signature|X-Amz-Security-Token|Authorization)[=:][^&\\s\\"}]+"), "$1=[REDACTED]")
+                val safeBody = body.replace(Regex("(?i)(X-Amz-Signature|X-Amz-Security-Token|Authorization)[=:][^&\\s\\"}]+"), "\\$1=[REDACTED]")
                 outcome = "Upgrade accepted: no; ${t.javaClass.simpleName}: ${t.message}; HTTP ${response?.code ?: "no response"}; response headers: $headers; response body: ${safeBody.ifBlank { "(empty)" }}"
                 latch.countDown()
             }
