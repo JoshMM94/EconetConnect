@@ -29,7 +29,7 @@ data class EcoNetInstallation(
 data class EcoNetComponent(
     val name: String, val serialNumber: String, val softwareVersion: String,
     val hardwareVersion: String, val protocol: String, val producerName: String = "",
-    val componentTypeId: Int = 0, val producerCode: Int = 0
+    val componentType: String = "", val componentTypeId: Int = 0, val producerCode: Int = 0
 )
 data class EcoNetInstallationDetails(
     val name: String, val serialNumber: String, val address: String,
@@ -155,6 +155,7 @@ object EcoNetCloudApi {
                                             ?: item.optString("producer").takeIf { it.isNotBlank() && it != "null" }
                                             ?: item.optString("componentType").takeIf { it.isNotBlank() && it != "null" }
                                             ?: "",
+                                        componentType = item.optString("componentType").takeIf { it.isNotBlank() && it != "null" } ?: "",
                                         componentTypeId = item.optInt("componentTypeId", item.optInt("typeId", 0)),
                                         producerCode = item.optInt("producerCode", item.optInt("manufacturerCode", 0))
                                     ))
@@ -284,7 +285,7 @@ object EcoNetCloudApi {
                                     component.componentTypeId <= 0 || component.producerCode <= 0 ||
                                     component.hardwareVersion == "—" || component.softwareVersion == "—") return@forEach
                                 val params = JSONObject()
-                                    .put("componentType", component.producerName.ifBlank { component.name })
+                                    .put("componentType", component.componentType.ifBlank { component.name })
                                     .put("componentTypeId", component.componentTypeId)
                                     .put("hardware", component.hardwareVersion)
                                     .put("software", component.softwareVersion)
