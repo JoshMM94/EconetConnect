@@ -82,10 +82,10 @@ private fun parseDashboard(source: String): DashboardValues {
 @Composable
 private fun EconetDashboardApp() {
     val context = LocalContext.current
-    var portalVisible by remember { mutableStateOf(true) }
+    var portalVisible by remember { mutableStateOf(false) }
     var capturedText by remember { mutableStateOf("") }
-    var title by remember { mutableStateOf("ecoNET Cloud") }
-    var pageStatus by remember { mutableStateOf("Opening official ecoNET Cloud…") }
+    var title by remember { mutableStateOf("No installation selected") }
+    var pageStatus by remember { mutableStateOf("Sign in to the official portal to load live data") }
     var lastRead by remember { mutableStateOf("Waiting for portal data") }
     var pageError by remember { mutableStateOf("") }
 
@@ -191,27 +191,28 @@ private fun EconetDashboardApp() {
                     Text("LIVE INSTALLATION", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
                     Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text("$pageStatus · $lastRead", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                    val v = remember(capturedText) { parseDashboard(capturedText) }
                     if (capturedText.isBlank()) {
                         ElevatedCard(Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Text("Connect to your installation", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                Text("Open the Econet portal, sign in, select your installation and open its live controller page. Return here to read the values visible in the portal.")
-                                Button(onClick = { portalVisible = true }) { Text("Open Econet portal") }
+                                Text("Sign in through the official Econet portal, select your installation and open its live controller page. Return here to populate this dashboard.")
+                                Button(onClick = { portalVisible = true }) { Text("Sign in to Econet") }
                             }
                         }
-                    } else {
-                        val v = remember(capturedText) { parseDashboard(capturedText) }
-                        DashboardSection("HEAT PUMP", v.state) {
-                            MetricGrid(listOf("Flow" to v.flow, "Return" to v.ret, "Flow rate" to v.rate,
-                                "Compressor frequency" to v.compressor, "Fan RPM" to v.fan, "Set temp" to v.hpSet))
-                        }
-                        DashboardSection("ROOM HEATING", null) {
-                            MetricGrid(listOf("Room temp" to v.room, "Room target" to v.roomTarget,
-                                "Weather curve" to v.curve, "Set temp" to v.roomSet, "Hysteresis" to v.hysteresis))
-                        }
-                        DashboardSection("HOT WATER", null) {
-                            MetricGrid(listOf("Hot water temp" to v.dhw, "Hot water target" to v.dhwTarget))
-                        }
+                    }
+                    DashboardSection("HEAT PUMP", v.state) {
+                        MetricGrid(listOf("Flow" to v.flow, "Return" to v.ret, "Flow rate" to v.rate,
+                            "Compressor frequency" to v.compressor, "Fan RPM" to v.fan, "Set temp" to v.hpSet))
+                    }
+                    DashboardSection("ROOM HEATING", null) {
+                        MetricGrid(listOf("Room temp" to v.room, "Room target" to v.roomTarget,
+                            "Weather curve" to v.curve, "Set temp" to v.roomSet, "Hysteresis" to v.hysteresis))
+                    }
+                    DashboardSection("HOT WATER", null) {
+                        MetricGrid(listOf("Hot water temp" to v.dhw, "Hot water target" to v.dhwTarget))
+                    }
+                    if (capturedText.isNotBlank()) {
                         Text("Source: official ecoNET portal · $lastRead", style = MaterialTheme.typography.bodySmall)
                         OutlinedButton(onClick = { portalVisible = true }, modifier = Modifier.fillMaxWidth()) { Text("Return to Econet portal") }
                         Text("Captured portal text (diagnostic)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
