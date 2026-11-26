@@ -3,7 +3,7 @@ package uk.co.econetconnect
 import com.amplifyframework.auth.AWSTemporaryCredentials
 import com.amazonaws.DefaultRequest
 import com.amazonaws.auth.AWS4Signer
-import com.amazonaws.auth.BasicAWSCredentials
+import com.amazonaws.auth.BasicSessionCredentials
 import com.amazonaws.http.HttpMethodName
 import okhttp3.*
 import okio.ByteString
@@ -253,10 +253,14 @@ class EcoNetMqttClient(
             setHttpMethod(HttpMethodName.GET)
         }
         val signer = AWS4Signer().apply { setRegionName(REGION); setServiceName(SERVICE) }
-        signer.presignRequest(request, BasicAWSCredentials(creds.accessKeyId, creds.secretAccessKey),
-            Date(System.currentTimeMillis() + 900_000L))
+        // The temporary session token must be part of the SigV4 presigned query
+        // BEFORE the signature is calculated. Appending it afterwards invalidates
+        // the canonical request used by AWS IoT.
+        signer.presignRequest(request, BasicSessionCredentials(
+            creds.accessKeyId, creds.secretAccessKey, creds.sessionToken
+        ), Date(System.currentTimeMillis() + 900_000L))
         val query = request.parameters.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
-        return "wss://$ENDPOINT/mqtt?$query&X-Amz-Security-Token=${encode(creds.sessionToken)}"
+        return "wss://$ENDPOINT/mqtt?$query"
     }
 
     private fun encode(value: String): String =
