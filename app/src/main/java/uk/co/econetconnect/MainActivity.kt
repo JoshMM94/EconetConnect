@@ -135,6 +135,8 @@ private fun EconetDashboardApp() {
                     capturePortalText(view) { text ->
                         capturedText = text
                         lastRead = "Captured " + SimpleDateFormat("HH:mm:ss", Locale.UK).format(Date())
+                        pageStatus = if (text.isBlank()) "Page loaded, but document body is empty" else "Portal rendered " + text.length + " readable characters"
+                        if (text.isBlank()) pageError = "Page-finished event fired, but no visible page text was found."
                     }
                 }
                 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError) {
