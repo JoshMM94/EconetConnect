@@ -267,22 +267,22 @@ object EcoNetCloudApi {
                     if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
                     val idToken = session.userPoolTokensResult.value?.idToken
                         ?: throw IllegalStateException("Cognito ID token is unavailable.")
-                    val mqttUserId = cognitoSubject(idToken)
-                        ?: throw IllegalStateException("Authenticated Cognito user ID (sub) is unavailable.")
                     val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                         ?: throw IllegalStateException("AWS temporary credentials could not be obtained.")
                     val groups = cognitoGroups(idToken)
-                    // ecoNET maps ServiceCompanyManagers to SERVICE_ADMIN (role 10).
-                    // The official web client uses serviceRequest/serviceResponse for this role.
                     val serviceRole = groups.contains("ServiceCompanyManagers")
-                    val unsupportedGroups = groups.filterNot { it == "ServiceCompanyManagers" }
-                    if (unsupportedGroups.isNotEmpty()) {
-                        throw IllegalStateException("Unsupported ecoNET role groups ($unsupportedGroups). Only standard customer and ServiceCompanyManagers topic families are implemented.")
+                    // Official ecoNET DEFAULT users use the Cognito Identity Pool identity ID
+                    // as MQTT client ID. Service-role identity is kept separate for later mapping.
+                    val mqttClientId = if (serviceRole) {
+                        cognitoSubject(idToken) ?: throw IllegalStateException("Authenticated Cognito subject is unavailable.")
+                    } else {
+                        session.identityIdResult.value
+                            ?: throw IllegalStateException("Cognito Identity Pool identity ID is unavailable for DEFAULT MQTT login.")
                     }
                     Thread {
                         var mqtt: EcoNetMqttClient? = null
                         try {
-                            mqtt = EcoNetMqttClient(installationId, mqttUserId, credentials, serviceRole)
+                            mqtt = EcoNetMqttClient(installationId, mqttClientId, credentials, serviceRole)
                             mqtt.connect()
                             val ping = mqtt.request(JSONObject().put("name", "CLIENT_PING"))
                             val pingStatus = ping.optInt("statusCode", 0)
@@ -357,11 +357,16 @@ object EcoNetCloudApi {
                 if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
                 val idToken = session.userPoolTokensResult.value?.idToken
                     ?: throw IllegalStateException("Cognito ID token unavailable.")
-                val mqttUserId = cognitoSubject(idToken)
-                    ?: throw IllegalStateException("Authenticated Cognito user ID (sub) unavailable.")
                 val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                     ?: throw IllegalStateException("AWS temporary credentials unavailable.")
                 val groups = cognitoGroups(idToken)
+                val serviceRole = groups.contains("ServiceCompanyManagers")
+                val mqttClientId = if (serviceRole) {
+                    cognitoSubject(idToken) ?: throw IllegalStateException("Authenticated Cognito subject unavailable.")
+                } else {
+                    session.identityIdResult.value
+                        ?: throw IllegalStateException("Cognito Identity Pool identity ID unavailable for DEFAULT MQTT login.")
+                }
                 Thread {
                     val report = StringBuilder()
                     report.appendLine("Econet Connect transport diagnostics")
@@ -370,12 +375,12 @@ object EcoNetCloudApi {
                     components.forEach { c ->
                         report.appendLine("- ${c.name}: serial=${c.serialNumber}, type=${c.componentType}, typeId=${c.componentTypeId}, producerCode=${c.producerCode}, hardware=${c.hardwareVersion}, software=${c.softwareVersion}, protocol=${c.protocol}")
                     }
-                    report.appendLine("Authenticated Cognito user ID present: ${mqttUserId.isNotBlank()}")
+                    report.appendLine("Cognito Identity Pool identity ID present: ${session.identityIdResult.value?.isNotBlank() == true}")
+                    report.appendLine("MQTT identity selected: ${if (serviceRole) "service-role subject" else "DEFAULT Cognito Identity Pool identity ID"}")
                     report.appendLine("Cognito groups: ${if (groups.isEmpty()) "(none in token)" else groups.joinToString()}")
                     report.appendLine("Credentials: temporary session credentials available (secret values deliberately excluded)")
                     try {
-                        val probe = EcoNetMqttClient(installationId, mqttUserId, credentials,
-                            groups.contains("ServiceCompanyManagers"))
+                        val probe = EcoNetMqttClient(installationId, mqttClientId, credentials, serviceRole)
                         report.appendLine()
                         report.appendLine("AWS IoT WebSocket handshake probe")
                         report.append(probe.diagnoseWebSocketHandshake())
@@ -404,18 +409,20 @@ object EcoNetCloudApi {
                 if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
                 val idToken = session.userPoolTokensResult.value?.idToken
                     ?: throw IllegalStateException("Cognito ID token unavailable.")
-                val mqttUserId = cognitoSubject(idToken)
-                    ?: throw IllegalStateException("Authenticated Cognito user ID (sub) unavailable.")
                 val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                     ?: throw IllegalStateException("AWS temporary credentials are unavailable.")
-                val groups = session.userPoolTokensResult.value?.idToken?.let { cognitoGroups(it) }.orEmpty()
+                val groups = cognitoGroups(idToken)
                 val serviceRole = groups.contains("ServiceCompanyManagers")
-                val unsupported = groups.filterNot { it == "ServiceCompanyManagers" }
-                if (unsupported.isNotEmpty()) throw IllegalStateException("Unsupported ecoNET role groups: $unsupported")
+                val mqttClientId = if (serviceRole) {
+                    cognitoSubject(idToken) ?: throw IllegalStateException("Authenticated Cognito subject unavailable.")
+                } else {
+                    session.identityIdResult.value
+                        ?: throw IllegalStateException("Cognito Identity Pool identity ID unavailable for DEFAULT MQTT login.")
+                }
                 Thread {
                     var mqtt: EcoNetMqttClient? = null
                     try {
-                        mqtt = EcoNetMqttClient(installationId, mqttUserId, credentials, serviceRole)
+                        mqtt = EcoNetMqttClient(installationId, mqttClientId, credentials, serviceRole)
                         mqtt.connect()
                         val ping = mqtt.request(JSONObject().put("name", "CLIENT_PING"))
                         if (ping.optInt("statusCode", 0) != 0) throw IllegalStateException("CLIENT_PING was not acknowledged.")
