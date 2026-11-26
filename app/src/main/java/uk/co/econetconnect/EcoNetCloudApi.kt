@@ -4,6 +4,8 @@ import com.amplifyframework.auth.AuthSessionResult
 import com.amplifyframework.auth.AWSTemporaryCredentials
 import com.amplifyframework.auth.cognito.AWSCognitoAuthSession
 import com.amplifyframework.core.Amplify
+import android.os.Handler
+import android.os.Looper
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -59,9 +61,10 @@ object EcoNetCloudApi {
                     Thread {
                         try {
                             val installations = requestInstallationList(credentials)
-                            onSuccess(installations)
+                            Handler(Looper.getMainLooper()).post { onSuccess(installations) }
                         } catch (error: Exception) {
-                            onError(error.message ?: "Could not retrieve installations from ecoNET Cloud.")
+                            val message = error.message ?: "Could not retrieve installations from ecoNET Cloud."
+                            Handler(Looper.getMainLooper()).post { onError(message) }
                         }
                     }.start()
                 } catch (error: Exception) {
@@ -84,7 +87,7 @@ object EcoNetCloudApi {
         val payloadHash = sha256Hex("")
         val canonicalHeaders = "appid:$APP_ID\nhost:$API_HOST\nx-amz-date:$amzDate\nx-amz-security-token:${credentials.sessionToken.trim()}\n"
         val signedHeaders = "appid;host;x-amz-date;x-amz-security-token"
-        val canonicalRequest = "GET\n$API_PATH\n\n$canonicalHeaders\n$signedHeaders\n$payloadHash"
+        val canonicalRequest = "GET\n$API_PATH\n\n$canonicalHeaders$signedHeaders\n$payloadHash"
         val credentialScope = "$dateStamp/$AWS_REGION/$AWS_SERVICE/aws4_request"
         val stringToSign = "AWS4-HMAC-SHA256\n$amzDate\n$credentialScope\n${sha256Hex(canonicalRequest)}"
 
@@ -92,7 +95,7 @@ object EcoNetCloudApi {
         val regionKey = hmac(dateKey, AWS_REGION)
         val serviceKey = hmac(regionKey, AWS_SERVICE)
         val signingKey = hmac(serviceKey, "aws4_request")
-        val signature = hmac(signingKey, stringToSign).joinToString("") { "%02x".format(it) }
+        val signature = hmac(signingKey, stringToSign).joinToString("") { "%02x".format(it.toInt() and 0xff) }
         val authorization = "AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/$credentialScope, SignedHeaders=$signedHeaders, Signature=$signature"
 
         val connection = (URL(API_URL).openConnection() as HttpURLConnection).apply {
