@@ -53,27 +53,35 @@ fun EconetConnectScreen(
     var isLoading by remember { mutableStateOf(false) }
     var awaitingChallenge by remember { mutableStateOf(false) }
     var isSignedIn by remember { mutableStateOf(false) }
-    var status by remember {
-        mutableStateOf(initializationError ?: "Not connected")
-    }
+    var installations by remember { mutableStateOf<List<EcoNetInstallation>>(emptyList()) }
+    var installationsLoaded by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf(initializationError ?: "Not connected") }
 
     fun showError(message: String) {
         isLoading = false
         status = message
     }
 
-    fun handleSignInResult(signedIn: Boolean, nextStep: String) {
-        isLoading = false
-        if (signedIn) {
-            isSignedIn = true
-            awaitingChallenge = false
-            password = ""
-            verificationCode = ""
-            status = "Signed in successfully. Installation access is the next step."
-        } else {
-            awaitingChallenge = true
-            status = "Your account requires another sign-in step: $nextStep"
-        }
+    fun loadInstallations() {
+        isLoading = true
+        installationsLoaded = false
+        status = "Retrieving installations securely from ecoNET Cloud…"
+        EcoNetCloudApi.fetchInstallations(
+            onSuccess = { result ->
+                installations = result
+                installationsLoaded = true
+                isLoading = false
+                status = if (result.isEmpty()) {
+                    "Cloud connection succeeded, but this account returned no installations."
+                } else {
+                    "Retrieved ${result.size} installation(s) from ecoNET Cloud."
+                }
+            },
+            onError = { message ->
+                isLoading = false
+                status = message
+            }
+        )
     }
 
     MaterialTheme {
@@ -97,19 +105,54 @@ fun EconetConnectScreen(
                 if (isSignedIn) {
                     Text("Cloud account", style = MaterialTheme.typography.titleLarge)
                     Text("Signed in as $email")
-                    Text(
-                        "Authentication is working. Installation retrieval will be enabled in the next build.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+                    Button(
+                        onClick = { loadInstallations() },
+                        enabled = !isLoading,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            Text(if (installationsLoaded) "Refresh installations" else "Load installations")
+                        }
+                    }
+
+                    if (installationsLoaded && installations.isEmpty()) {
+                        Text("No installations were returned for this account.")
+                    }
+
+                    installations.forEach { installation ->
+                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(installation.name, style = MaterialTheme.typography.titleMedium)
+                                Text("Serial: ${installation.factoryNumber}")
+                                if (installation.address.isNotBlank()) Text(installation.address)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(if (installation.connected) "Connected" else "Not connected")
+                                    if (installation.hasAlarms) Text("· Alarms present")
+                                }
+                                if (installation.softwareVersion.isNotBlank()) {
+                                    Text("Software: ${installation.softwareVersion}")
+                                }
+                            }
+                        }
+                    }
+
                     Button(
                         onClick = {
                             Amplify.Auth.signOut { _ ->
                                 isSignedIn = false
                                 email = ""
+                                installations = emptyList()
+                                installationsLoaded = false
                                 status = "Signed out"
                             }
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
                     ) { Text("Sign out") }
                 } else {
                     Text("Cloud account", style = MaterialTheme.typography.titleLarge)
@@ -158,14 +201,20 @@ fun EconetConnectScreen(
                                     Amplify.Auth.confirmSignIn(
                                         verificationCode.trim(),
                                         { result ->
-                                            handleSignInResult(
-                                                result.isSignedIn,
-                                                result.nextStep.signInStep.toString()
-                                            )
+                                            isLoading = false
+                                            if (result.isSignedIn) {
+                                                isSignedIn = true
+                                                awaitingChallenge = false
+                                                password = ""
+                                                verificationCode = ""
+                                                status = "Signed in. Retrieving your installations…"
+                                                loadInstallations()
+                                            } else {
+                                                awaitingChallenge = true
+                                                status = "Another sign-in step is required: ${result.nextStep.signInStep}"
+                                            }
                                         },
-                                        { error ->
-                                            showError(error.localizedMessage ?: "Verification failed.")
-                                        }
+                                        { error -> showError(error.localizedMessage ?: "Verification failed.") }
                                     )
                                 }
                             } else if (email.isBlank() || password.isBlank()) {
@@ -177,14 +226,18 @@ fun EconetConnectScreen(
                                     email.trim(),
                                     password,
                                     { result ->
-                                        handleSignInResult(
-                                            result.isSignedIn,
-                                            result.nextStep.signInStep.toString()
-                                        )
+                                        isLoading = false
+                                        if (result.isSignedIn) {
+                                            isSignedIn = true
+                                            password = ""
+                                            status = "Signed in. Retrieving your installations…"
+                                            loadInstallations()
+                                        } else {
+                                            awaitingChallenge = true
+                                            status = "Your account requires another sign-in step: ${result.nextStep.signInStep}"
+                                        }
                                     },
-                                    { error ->
-                                        showError(error.localizedMessage ?: "Sign-in failed.")
-                                    }
+                                    { error -> showError(error.localizedMessage ?: "Sign-in failed.") }
                                 )
                             }
                         },
@@ -192,10 +245,7 @@ fun EconetConnectScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         if (isLoading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp
-                            )
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         } else {
                             Text(if (awaitingChallenge) "Confirm code" else "Sign in")
                         }
