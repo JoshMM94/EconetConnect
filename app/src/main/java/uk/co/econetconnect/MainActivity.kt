@@ -98,6 +98,7 @@ private fun EconetDashboardApp() {
             settings.databaseEnabled = true
             settings.allowFileAccess = false
             settings.allowContentAccess = false
+            settings.userAgentString = settings.userAgentString.replace("; wv", "").replace("Version/4.0 ", "")
             settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             setBackgroundColor(android.graphics.Color.WHITE)
             CookieManager.getInstance().setAcceptCookie(true)
@@ -159,7 +160,6 @@ private fun EconetDashboardApp() {
                     pageStatus = "Secure connection blocked"
                 }
             }
-            loadUrl(ECONET_PORTAL)
         }
     }
 
@@ -222,7 +222,7 @@ private fun EconetDashboardApp() {
                         if (pageProgress in 1..99) LinearProgressIndicator(progress = { pageProgress / 100f }, modifier = Modifier.fillMaxWidth())
                         if (pageError.isNotBlank()) Text(pageError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     }
-                    AndroidView(factory = { webView }, modifier = Modifier.fillMaxSize())
+                    AndroidView(factory = { view -> if (view.url.isNullOrBlank()) view.loadUrl(ECONET_PORTAL); view }, modifier = Modifier.fillMaxSize())
                 }
             } else {
                 Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
