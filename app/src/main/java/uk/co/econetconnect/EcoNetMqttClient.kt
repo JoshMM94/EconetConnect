@@ -98,7 +98,15 @@ class EcoNetMqttClient(
             try { client.disconnectForcibly() } catch (_: Exception) {}
             throw IllegalStateException("Timed out connecting to the ecoNET MQTT broker.")
         }
-        failure?.let { throw IllegalStateException("ecoNET MQTT connection failed: ${it.message}", it) }
+        failure?.let {
+            val mqttError = it as? org.eclipse.paho.client.mqttv3.MqttException
+            val reason = mqttError?.reasonCode?.toString() ?: "n/a"
+            val detail = it.cause?.message?.takeIf { message -> message.isNotBlank() }
+            throw IllegalStateException(
+                "ecoNET MQTT connection failed (reason code $reason): ${detail ?: it.message ?: it.javaClass.simpleName}",
+                it
+            )
+        }
         mqtt = client
     }
 
@@ -149,6 +157,7 @@ class EcoNetMqttClient(
             "X-Amz-Credential" to "${creds.accessKeyId}/$scope",
             "X-Amz-Date" to timestamp,
             "X-Amz-Expires" to "900",
+            "X-Amz-Security-Token" to creds.sessionToken,
             "X-Amz-SignedHeaders" to "host"
         )
         val canonicalQuery = params.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
@@ -161,8 +170,7 @@ class EcoNetMqttClient(
         val kService = hmac(kRegion, SERVICE)
         val kSigning = hmac(kService, "aws4_request")
         val signature = hex(hmac(kSigning, stringToSign))
-        val token = "&X-Amz-Security-Token=${encode(creds.sessionToken)}"
-        return "wss://$ENDPOINT/mqtt?$canonicalQuery&X-Amz-Signature=$signature$token"
+        return "wss://$ENDPOINT/mqtt?$canonicalQuery&X-Amz-Signature=$signature"
     }
 
     private fun encode(value: String): String =
