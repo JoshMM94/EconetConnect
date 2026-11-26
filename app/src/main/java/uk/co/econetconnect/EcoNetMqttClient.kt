@@ -222,8 +222,8 @@ class EcoNetMqttClient(
             setServiceName(SERVICE)
         }
         signer.presignRequest(request, awsCredentials, Date(System.currentTimeMillis() + 900_000L))
-        val query = request.parameters.entries.joinToString("&") { (key, values) ->
-            values.joinToString("&") { value -> "${encode(key)}=${encode(value)}" }
+        val query = request.parameters.entries.joinToString("&") { entry ->
+            "${encode(entry.key)}=${encode(entry.value)}"
         }
         return "wss://$ENDPOINT/mqtt?$query"
     }
