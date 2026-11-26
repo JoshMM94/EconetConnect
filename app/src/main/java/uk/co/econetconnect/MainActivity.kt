@@ -126,6 +126,7 @@ private fun EconetDashboardApp() {
                 override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                     pageStatus = "Loading official portal…"
                     pageError = ""
+                    pageProgress = 0
                 }
                 override fun onPageFinished(view: WebView, url: String) {
                     title = view.title?.takeIf { it.isNotBlank() } ?: "ecoNET Cloud"
@@ -137,9 +138,20 @@ private fun EconetDashboardApp() {
                 }
                 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError) {
                     if (request.isForMainFrame) {
-                        pageError = error.description?.toString() ?: "Portal could not be loaded."
+                        pageError = "Web error " + error.errorCode + ": " + error.description + " · " + request.url
                         pageStatus = "Portal loading failed"
                     }
+                }
+                override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: android.webkit.WebResourceResponse) {
+                    if (request.isForMainFrame) {
+                        pageError = "Econet returned HTTP " + errorResponse.statusCode + " " + errorResponse.reasonPhrase + " for " + request.url
+                        pageStatus = "Portal server returned an error"
+                    }
+                }
+                override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
+                    pageError = "The portal renderer stopped unexpectedly. Tap Reload to restart it."
+                    pageStatus = "Portal renderer stopped"
+                    return true
                 }
                 override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: android.net.http.SslError) {
                     handler.cancel()
@@ -168,24 +180,24 @@ private fun EconetDashboardApp() {
     }
 
     MaterialTheme(colorScheme = lightColorScheme(
-        primary = Color(0xFF006B3F),
+        primary = Color(0xFF496B58),
         onPrimary = Color.White,
-        primaryContainer = Color(0xFFFFF200),
-        onPrimaryContainer = Color(0xFF003B20),
-        secondary = Color(0xFFFFD500),
-        onSecondary = Color(0xFF003B20),
-        secondaryContainer = Color(0xFFE5F4E9),
-        onSecondaryContainer = Color(0xFF003B20),
-        tertiary = Color(0xFF008A45),
-        background = Color(0xFFFFFDF0),
-        surface = Color(0xFFFFFEF8),
-        surfaceVariant = Color(0xFFFFF9CC),
-        onSurface = Color(0xFF173B29),
-        onSurfaceVariant = Color(0xFF496353)
+        primaryContainer = Color(0xFFDCE8DE),
+        onPrimaryContainer = Color(0xFF203D2D),
+        secondary = Color(0xFFB08D62),
+        onSecondary = Color(0xFF203D2D),
+        secondaryContainer = Color(0xFFEDE3D4),
+        onSecondaryContainer = Color(0xFF203D2D),
+        tertiary = Color(0xFF78917D),
+        background = Color(0xFFF5F4EF),
+        surface = Color(0xFFFFFEFA),
+        surfaceVariant = Color(0xFFECEBE4),
+        onSurface = Color(0xFF26352D),
+        onSurfaceVariant = Color(0xFF59665D)
     )) {
         Scaffold(
             topBar = {
-                Row(Modifier.fillMaxWidth().background(Color(0xFFFFFEF8)).padding(16.dp),
+                Row(Modifier.fillMaxWidth().background(Color(0xFFFFFEFA)).padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     Column {
                         Text("Econet Connect", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -205,7 +217,11 @@ private fun EconetDashboardApp() {
         ) { padding ->
             if (portalVisible) {
                 Column(Modifier.fillMaxSize().padding(padding)) {
-                    if (pageError.isNotBlank()) Text(pageError, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp))
+                    Column(Modifier.fillMaxWidth().background(Color(0xFFF5F4EF)).padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        Text(pageStatus, style = MaterialTheme.typography.labelMedium, color = Color(0xFF52645A))
+                        if (pageProgress in 1..99) LinearProgressIndicator(progress = { pageProgress / 100f }, modifier = Modifier.fillMaxWidth())
+                        if (pageError.isNotBlank()) Text(pageError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
                     AndroidView(factory = { webView }, modifier = Modifier.fillMaxSize())
                 }
             } else {
@@ -260,7 +276,7 @@ private fun capturePortalText(webView: WebView, callback: (String) -> Unit) {
 
 @Composable
 private fun DashboardSection(title: String, status: String?, content: @Composable ColumnScope.() -> Unit) {
-    ElevatedCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFFFFFEF8))) {
+    ElevatedCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFFFFFEFA))) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -277,10 +293,10 @@ private fun MetricGrid(items: List<Pair<String, String>>) {
         items.chunked(2).forEach { group ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 group.forEach { (label, value) ->
-                    Surface(Modifier.weight(1f), color = Color(0xFFFFF9CC), shape = RoundedCornerShape(14.dp)) {
+                    Surface(Modifier.weight(1f), color = Color(0xFFECEBE4), shape = RoundedCornerShape(14.dp)) {
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Text(label, style = MaterialTheme.typography.labelMedium, color = Color(0xFF496353))
-                            Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Color(0xFF006B3F))
+                            Text(label, style = MaterialTheme.typography.labelMedium, color = Color(0xFF59665D))
+                            Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Color(0xFF496B58))
                         }
                     }
                 }
