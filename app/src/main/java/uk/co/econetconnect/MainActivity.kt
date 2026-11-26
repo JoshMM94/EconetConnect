@@ -99,6 +99,7 @@ fun EconetConnectScreen(
     var installationDetails by remember { mutableStateOf<EcoNetInstallationDetails?>(null) }
     var controllerProfiles by remember { mutableStateOf<List<EcoNetControllerProfile>>(emptyList()) }
     var profileStatus by remember { mutableStateOf("Controller profile not loaded") }
+    var mqttStatus by remember { mutableStateOf("MQTT not connected") }
     var status by remember { mutableStateOf(initializationError ?: "Not connected") }
 
     fun showError(message: String) {
@@ -117,7 +118,14 @@ fun EconetConnectScreen(
             installation.id,
             onSuccess = { details ->
                 installationDetails = details
-                status = "Installation details retrieved."
+                status = "Installation details retrieved. Connecting MQTT and registering components…"
+                mqttStatus = "Connecting to AWS IoT MQTT…"
+                EcoNetCloudApi.connectAndRegisterComponents(
+                    installationId = installation.id,
+                    components = details.components,
+                    onSuccess = { result -> mqttStatus = result },
+                    onError = { message -> mqttStatus = "MQTT / registration failed: $message" }
+                )
                 profileStatus = "Loading profiles for discovered components…"
                 EcoNetCloudApi.fetchControllerProfiles(
                     details.components,
@@ -192,7 +200,7 @@ fun EconetConnectScreen(
                             installationName = details.name,
                             circuitLabel = "Circuit 2",
                             connectionLabel = if (details.connected) "Installation connected" else "Installation offline",
-                            profileLabel = profileStatus
+                            profileLabel = "$profileStatus\\n$mqttStatus"
                         )
                     }
                 } else if (isSignedIn) {

@@ -28,13 +28,15 @@ data class EcoNetInstallation(
 
 data class EcoNetComponent(
     val name: String, val serialNumber: String, val softwareVersion: String,
-    val hardwareVersion: String, val protocol: String, val producerName: String = ""
+    val hardwareVersion: String, val protocol: String, val producerName: String = "",
+    val componentTypeId: Int = 0, val producerCode: Int = 0
 )
 data class EcoNetInstallationDetails(
     val name: String, val serialNumber: String, val address: String,
     val connected: Boolean, val hasAlarms: Boolean, val softwareVersion: String,
     val hardwareVersion: String, val components: List<EcoNetComponent>,
-    val invalidComponents: List<String>
+    val invalidComponents: List<String>,
+    val registrationStatus: String = "Not started"
 )
 
 data class EcoNetControllerProfile(
@@ -152,7 +154,9 @@ object EcoNetCloudApi {
                                         producerName = item.optString("producerName").takeIf { it.isNotBlank() && it != "null" }
                                             ?: item.optString("producer").takeIf { it.isNotBlank() && it != "null" }
                                             ?: item.optString("componentType").takeIf { it.isNotBlank() && it != "null" }
-                                            ?: ""
+                                            ?: "",
+                                        componentTypeId = item.optInt("componentTypeId", item.optInt("typeId", 0)),
+                                        producerCode = item.optInt("producerCode", item.optInt("manufacturerCode", 0))
                                     ))
                                 }
                             }
@@ -234,6 +238,110 @@ object EcoNetCloudApi {
             },
             { error -> onError(error.localizedMessage ?: "Could not retrieve AWS session.") }
         )
+    }
+
+
+    /**
+     * Opens the installation's AWS IoT session using the signed-in Cognito identity,
+     * discovers devices on the bus, then submits the installation's known component
+     * metadata using the same REGISTER_COMPONENTS operation as the web client.
+     * This is registration/metadata only; it does not write controller parameters.
+     */
+    fun connectAndRegisterComponents(
+        installationId: String,
+        components: List<EcoNetComponent>,
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        Amplify.Auth.fetchAuthSession(
+            { authSession ->
+                try {
+                    val session = authSession as? AWSCognitoAuthSession
+                        ?: throw IllegalStateException("Cognito session was not available.")
+                    if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
+                    val identityId = session.identityIdResult.value
+                        ?: throw IllegalStateException("Cognito Identity ID is unavailable. Check the Identity Pool configuration.")
+                    val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
+                        ?: throw IllegalStateException("AWS temporary credentials could not be obtained.")
+                    val idToken = session.userPoolTokensResult.value?.idToken
+                    val groups = idToken?.let { cognitoGroups(it) }.orEmpty()
+                    if (groups.isNotEmpty()) {
+                        throw IllegalStateException("This account has special ecoNET role groups ($groups). The current MQTT topic implementation supports standard customer accounts only; refusing to connect using the wrong topic permissions.")
+                    }
+                    Thread {
+                        var mqtt: EcoNetMqttClient? = null
+                        try {
+                            mqtt = EcoNetMqttClient(installationId, identityId, credentials)
+                            mqtt.connect()
+                            val ping = mqtt.request(JSONObject().put("name", "CLIENT_PING"))
+                            val pingStatus = ping.optInt("statusCode", 0)
+                            if (pingStatus != 0) throw IllegalStateException("MQTT broker connected, but CLIENT_PING returned status $pingStatus.")
+                            val bus = mqtt.request(JSONObject().put("name", "GET_COMPONENTS_ON_BUS"))
+                            val busTargets = bus.optJSONArray("targets") ?: JSONArray()
+                            val registrationTargets = JSONArray()
+                            components.forEach { component ->
+                                if (component.serialNumber.isBlank() || component.serialNumber == "—" ||
+                                    component.componentTypeId <= 0 || component.producerCode <= 0 ||
+                                    component.hardwareVersion == "—" || component.softwareVersion == "—") return@forEach
+                                val params = JSONObject()
+                                    .put("componentType", component.producerName.ifBlank { component.name })
+                                    .put("componentTypeId", component.componentTypeId)
+                                    .put("hardware", component.hardwareVersion)
+                                    .put("software", component.softwareVersion)
+                                    .put("installationId", installationId)
+                                    .put("isHidden", false)
+                                    .put("manufacturer", component.producerName.ifBlank { "Unknown" })
+                                    .put("manufacturerCode", component.producerCode)
+                                    .put("serialNumber", component.serialNumber)
+                                registrationTargets.put(JSONObject()
+                                    .put("component", component.serialNumber)
+                                    .put("parameters", params))
+                            }
+                            val registeredCount = if (registrationTargets.length() > 0) {
+                                val result = mqtt.request(JSONObject()
+                                    .put("name", "REGISTER_COMPONENTS")
+                                    .put("targets", registrationTargets))
+                                val targets = result.optJSONArray("targets") ?: JSONArray()
+                                var accepted = 0
+                                val rejected = mutableListOf<String>()
+                                for (i in 0 until targets.length()) {
+                                    val item = targets.optJSONObject(i) ?: continue
+                                    when (item.optInt("statusCode", -1)) {
+                                        0 -> accepted++
+                                        else -> rejected.add("${item.optString("component")}: status ${item.optInt("statusCode", -1)}")
+                                    }
+                                }
+                                if (rejected.isNotEmpty()) throw IllegalStateException("MQTT connected and discovered $busTargets component bus target(s), but component registration had failures: ${rejected.joinToString()}")
+                                accepted
+                            } else 0
+                            val summary = "MQTT connected; CLIENT_PING acknowledged; discovered ${busTargets.length()} bus target(s); registered $registeredCount installation component(s)."
+                            mqtt.disconnect()
+                            Handler(Looper.getMainLooper()).post { onSuccess(summary) }
+                        } catch (error: Exception) {
+                            try { mqtt?.disconnect() } catch (_: Exception) {}
+                            Handler(Looper.getMainLooper()).post {
+                                onError(error.message ?: "Could not connect and register installation components.")
+                            }
+                        }
+                    }.start()
+                } catch (error: Exception) {
+                    onError(error.message ?: "Could not prepare the authenticated MQTT session.")
+                }
+            },
+            { error -> onError(error.localizedMessage ?: "Could not retrieve the authenticated AWS session.") }
+        )
+    }
+
+    private fun cognitoGroups(idToken: String): List<String> {
+        return try {
+            val payload = idToken.split(".").getOrNull(1) ?: return emptyList()
+            val decoded = String(android.util.Base64.decode(
+                payload + "=".repeat((4 - payload.length % 4) % 4),
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP
+            ), Charsets.UTF_8)
+            val groups = JSONObject(decoded).optJSONArray("cognito:groups") ?: return emptyList()
+            buildList { for (i in 0 until groups.length()) add(groups.optString(i)) }
+        } catch (_: Exception) { emptyList() }
     }
 
     private fun signedGet(path: String, credentials: AWSTemporaryCredentials): String {

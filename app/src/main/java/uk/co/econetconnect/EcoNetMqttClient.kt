@@ -80,7 +80,7 @@ class EcoNetMqttClient(
         client.connect(options, null, object : IMqttActionListener {
             override fun onSuccess(token: org.eclipse.paho.client.mqttv3.IMqttToken?) {
                 try {
-                    client.subscribe(arrayOf(responseTopic, notificationTopic), intArrayOf(0, 0))
+                    client.subscribe(arrayOf(responseTopic, notificationTopic), intArrayOf(0, 0)).waitForCompletion(15000)
                     connected = true
                 } catch (error: Throwable) {
                     failure = error
