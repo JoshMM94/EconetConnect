@@ -113,29 +113,47 @@ class EcoNetMqttClient(
         }, 40, 40, TimeUnit.SECONDS)
     }
 
-    fun diagnoseWebSocketHandshake(): String {
+    fun diagnoseWebSocketHandshake(probeLabel: String, sendOrigin: Boolean = true): String {
         val uri = presignedWebSocketUrl(credentials)
-        val safeQuery = uri.substringAfter("?", "").split("&").mapNotNull { part ->
+        val queryParts = uri.substringAfter("?", "").split("&").filter { it.contains("=") }
+        val queryNames = queryParts.map { it.substringBefore("=") }.sorted().distinct()
+        val safeQuery = queryParts.mapNotNull { part ->
             val key = part.substringBefore("=")
             if (key in setOf("X-Amz-Algorithm", "X-Amz-Date", "X-Amz-Expires", "X-Amz-SignedHeaders")) part else null
         }.joinToString("&")
+        val credentialScope = queryParts.firstOrNull { it.startsWith("X-Amz-Credential=") }
+            ?.substringAfter("=")?.substringAfter("%2F", "")?.replace("%2F", "/")
+            ?.substringAfter("/", "")
+            ?: "(not present)"
         val latch = CountDownLatch(1)
         var outcome = "No WebSocket response received."
-        val probe = OkHttpClient.Builder().callTimeout(25, TimeUnit.SECONDS).build()
-        probe.newWebSocket(Request.Builder().url(uri).header("Origin", "https://cloud.grant.eu")
-            .header("Sec-WebSocket-Protocol", "mqttv3.1").build(), object : WebSocketListener() {
+        val probe = OkHttpClient.Builder().callTimeout(27, TimeUnit.SECONDS).build()
+        val builder = Request.Builder().url(uri).header("Sec-WebSocket-Protocol", "mqttv3.1")
+        if (sendOrigin) builder.header("Origin", "https://cloud.grant.eu")
+        probe.newWebSocket(builder.build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                outcome = "HTTP ${response.code}; Upgrade accepted: yes; protocol: ${response.header("Sec-WebSocket-Protocol") ?: "not returned"}"
-                webSocket.close(1000, "Diagnostic complete"); latch.countDown()
+                val headers = listOf("Date", "Server", "x-amzn-RequestId", "x-amzn-ErrorType",
+                    "x-amz-cf-id", "content-type", "content-length")
+                    .mapNotNull { name -> response.header(name)?.let { "$name=$it" } }
+                    .joinToString("; ").ifBlank { "(none returned)" }
+                outcome = "HTTP ${response.code}; Upgrade accepted: yes; protocol: ${response.header("Sec-WebSocket-Protocol") ?: "not returned"}; response headers: $headers"
+                webSocket.close(1000, "Diagnostic complete")
+                latch.countDown()
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                outcome = "Upgrade accepted: no; ${t.javaClass.simpleName}: ${t.message}; HTTP ${response?.code ?: "no response"}"
+                val headers = listOf("Date", "Server", "x-amzn-RequestId", "x-amzn-ErrorType",
+                    "x-amz-cf-id", "content-type", "content-length")
+                    .mapNotNull { name -> response?.header(name)?.let { "$name=$it" } }
+                    .joinToString("; ").ifBlank { "(none returned)" }
+                val body = try { response?.body?.string().orEmpty().take(1200) } catch (_: Exception) { "" }
+                val safeBody = body.replace(Regex("(?i)(X-Amz-Signature|X-Amz-Security-Token|Authorization)[=:][^&\\s\\"}]+"), "$1=[REDACTED]")
+                outcome = "Upgrade accepted: no; ${t.javaClass.simpleName}: ${t.message}; HTTP ${response?.code ?: "no response"}; response headers: $headers; response body: ${safeBody.ifBlank { "(empty)" }}"
                 latch.countDown()
             }
         })
-        if (!latch.await(27, TimeUnit.SECONDS)) outcome = "WebSocket diagnostic timed out."
+        if (!latch.await(29, TimeUnit.SECONDS)) outcome = "WebSocket diagnostic timed out."
         probe.dispatcher.executorService.shutdown()
-        return "AWS IoT endpoint: $ENDPOINT\nSigning service: $SERVICE\nRegion: $REGION\nMQTT subprotocol: mqttv3.1\nSigned query (secrets removed): $safeQuery\nTemporary session token present: ${credentials.sessionToken.isNotBlank()}\n$outcome"
+        return "Probe: $probeLabel\nClient ID suffix: ${clientId.takeLast(8)} (length ${clientId.length})\nOrigin header sent: $sendOrigin\nAWS IoT endpoint: $ENDPOINT\nSigning service: $SERVICE\nRegion: $REGION\nCredential scope: $credentialScope\nMQTT subprotocol: mqttv3.1\nSigned query fields: ${queryNames.joinToString()}\nSigned query (secrets removed): $safeQuery\nTemporary session token present: ${credentials.sessionToken.isNotBlank()} (length ${credentials.sessionToken.length})\n$outcome"
     }
 
     @Synchronized
