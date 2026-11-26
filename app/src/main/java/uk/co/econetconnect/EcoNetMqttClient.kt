@@ -159,7 +159,13 @@ class EcoNetMqttClient(
         val operations = response.optJSONArray("operations")
             ?: throw IllegalStateException("MQTT response did not contain operations.")
         if (operations.length() == 0) throw IllegalStateException("MQTT response contained no operation result.")
-        return operations.getJSONObject(0)
+        val first = operations.opt(0)
+        if (first is JSONObject) return first
+        if (first is String) {
+            throw IllegalStateException("ecoNET MQTT operation returned a string error instead of an object: " + first)
+        }
+        throw IllegalStateException("ecoNET MQTT operation result had unexpected type: " +
+            (first?.javaClass?.simpleName ?: "null") + "; raw response: " + response.toString())
     }
 
     @Synchronized
