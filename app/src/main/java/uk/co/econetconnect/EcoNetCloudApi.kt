@@ -222,7 +222,7 @@ object EcoNetCloudApi {
                                 val encodedHardware = java.net.URLEncoder.encode(component.hardwareVersion, "UTF-8")
                                 val encodedSoftware = java.net.URLEncoder.encode(component.softwareVersion, "UTF-8")
                                 val profilePath = "/v1/profiles/" + component.producerCode + "/" + encodedName + "/" + encodedHardware + "/" + encodedSoftware + "/web/profile.json"
-                                val translationsPath = "/v1/profiles/" + encodedName + "/" + encodedHardware + "/" + encodedSoftware + "/web/trans_en.json"
+                                val translationsPath = "/v1/profiles/" + component.producerCode + "/" + encodedName + "/" + encodedHardware + "/" + encodedSoftware + "/web/trans_en.json"
                                 val profile = fetchArchiveResource(profilePath)
                                 val translations = fetchArchiveResource(translationsPath)
                                 EcoNetControllerProfile(component.name, producer, component.hardwareVersion,
