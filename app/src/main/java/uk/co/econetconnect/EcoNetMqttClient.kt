@@ -56,7 +56,7 @@ class EcoNetMqttClient(
         val uri = presignedWebSocketUrl(credentials)
         val client = MqttAsyncClient(uri, clientId, MemoryPersistence())
         val options = MqttConnectOptions().apply {
-            mqttVersion = MqttConnectOptions.MQTT_VERSION_3_1
+            mqttVersion = MqttConnectOptions.MQTT_VERSION_3_1_1
             isCleanSession = true
             keepAliveInterval = 60
             connectionTimeout = 30
