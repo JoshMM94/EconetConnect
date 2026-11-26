@@ -465,7 +465,13 @@ object EcoNetCloudApi {
         }, { error -> onError(error.localizedMessage ?: "Could not retrieve authenticated AWS session.") })
     }
 
-    private fun cognitoSubject(idToken: String): String? = try {\n        val payload = idToken.split(".").getOrNull(1) ?: return null\n        val decoded = String(android.util.Base64.decode(payload + "=".repeat((4 - payload.length % 4) % 4), android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP), Charsets.UTF_8)\n        JSONObject(decoded).optString("sub").takeIf { it.isNotBlank() }\n    } catch (_: Exception) { null }\n\n    private fun cognitoGroups(idToken: String): List<String> {
+    private fun cognitoSubject(idToken: String): String? = try {
+        val payload = idToken.split(".").getOrNull(1) ?: return null
+        val decoded = String(android.util.Base64.decode(payload + "=".repeat((4 - payload.length % 4) % 4), android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP), Charsets.UTF_8)
+        JSONObject(decoded).optString("sub").takeIf { it.isNotBlank() }
+    } catch (_: Exception) { null }
+
+    private fun cognitoGroups(idToken: String): List<String> {
         return try {
             val payload = idToken.split(".").getOrNull(1) ?: return emptyList()
             val decoded = String(android.util.Base64.decode(
