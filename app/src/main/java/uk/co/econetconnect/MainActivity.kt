@@ -47,13 +47,15 @@ class MainActivity : ComponentActivity() {
 private fun CircuitHomeScreen(
     installationName: String,
     circuitLabel: String,
-    connectionLabel: String
+    connectionLabel: String,
+    profileLabel: String
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Home", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Text(installationName, style = MaterialTheme.typography.bodyMedium)
         Text(circuitLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Text(connectionLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+        Text(profileLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
 
         ParameterHomeCard("Target Room Temp", "Not loaded yet", "Requested room temperature setpoint")
         ParameterHomeCard("Current Room Temp", "Not loaded yet", "Measured room temperature")
@@ -95,6 +97,8 @@ fun EconetConnectScreen(
     var installationsLoaded by remember { mutableStateOf(false) }
     var selectedInstallation by remember { mutableStateOf<EcoNetInstallation?>(null) }
     var installationDetails by remember { mutableStateOf<EcoNetInstallationDetails?>(null) }
+    var controllerProfiles by remember { mutableStateOf<List<EcoNetControllerProfile>>(emptyList()) }
+    var profileStatus by remember { mutableStateOf("Controller profile not loaded") }
     var status by remember { mutableStateOf(initializationError ?: "Not connected") }
 
     fun showError(message: String) {
@@ -105,11 +109,29 @@ fun EconetConnectScreen(
     fun openInstallation(installation: EcoNetInstallation) {
         selectedInstallation = installation
         installationDetails = null
+        controllerProfiles = emptyList()
+        profileStatus = "Loading controller profile…"
         isLoading = true
         status = "Opening installation and retrieving configuration…"
         EcoNetCloudApi.fetchInstallationDetails(
             installation.id,
-            onSuccess = { details -> installationDetails = details; isLoading = false; status = "Installation details retrieved." },
+            onSuccess = { details ->
+                installationDetails = details
+                status = "Installation details retrieved."
+                profileStatus = "Loading profiles for discovered components…"
+                EcoNetCloudApi.fetchControllerProfiles(
+                    details.components,
+                    onSuccess = { profiles ->
+                        controllerProfiles = profiles
+                        profileStatus = "Loaded ${profiles.size} controller profile(s)"
+                        isLoading = false
+                    },
+                    onError = { message ->
+                        profileStatus = message
+                        isLoading = false
+                    }
+                )
+            },
             onError = { message -> isLoading = false; status = message }
         )
     }
@@ -169,7 +191,8 @@ fun EconetConnectScreen(
                         CircuitHomeScreen(
                             installationName = details.name,
                             circuitLabel = "Circuit 2",
-                            connectionLabel = if (details.connected) "Installation connected" else "Installation offline"
+                            connectionLabel = if (details.connected) "Installation connected" else "Installation offline",
+                            profileLabel = profileStatus
                         )
                     }
                 } else if (isSignedIn) {
