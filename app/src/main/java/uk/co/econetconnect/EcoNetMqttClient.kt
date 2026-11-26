@@ -228,7 +228,8 @@ class EcoNetMqttClient(
         val query = request.parameters.entries.joinToString("&") { entry ->
             "${encode(entry.key)}=${encode(entry.value)}"
         }
-        val token = encode(creds.sessionToken)\n        return "wss://$ENDPOINT/mqtt?$query&X-Amz-Security-Token=$token"
+        val token = encode(creds.sessionToken)
+        return "wss://$ENDPOINT/mqtt?$query&X-Amz-Security-Token=$token"
     }
 
     private fun encode(value: String): String =
