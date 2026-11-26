@@ -78,8 +78,10 @@ object EcoNetCloudApi {
             .withZone(ZoneOffset.UTC).format(now)
 
         val payloadHash = sha256Hex("")
-        // Header order must match the lexicographically sorted SigV4 SignedHeaders list below.
-        val canonicalHeaders = "appid:$APP_ID\nhost:$API_HOST\nx-amz-date:$amzDate\nx-amz-security-token:${credentials.sessionToken.trim()}\n"
+        // Sign and transmit the exact same normalized header value.
+        val sessionToken = normalizeHeaderValue(credentials.sessionToken)
+        // Header names are lowercase and sorted lexicographically as required by SigV4.
+        val canonicalHeaders = "appid:$APP_ID\nhost:$API_HOST\nx-amz-date:$amzDate\nx-amz-security-token:$sessionToken\n"
         val signedHeaders = "appid;host;x-amz-date;x-amz-security-token"
         val canonicalRequest = "GET\n$API_PATH\n\n$canonicalHeaders$signedHeaders\n$payloadHash"
         val credentialScope = "$dateStamp/$AWS_REGION/$AWS_SERVICE/aws4_request"
@@ -99,7 +101,7 @@ object EcoNetCloudApi {
             setRequestProperty("Accept", "application/json")
             setRequestProperty("appid", APP_ID)
             setRequestProperty("x-amz-date", amzDate)
-            setRequestProperty("x-amz-security-token", credentials.sessionToken)
+            setRequestProperty("x-amz-security-token", sessionToken)
             setRequestProperty("Authorization", authorization)
         }
 
@@ -144,6 +146,9 @@ object EcoNetCloudApi {
             connection.disconnect()
         }
     }
+
+    private fun normalizeHeaderValue(value: String): String =
+        value.trim().replace(Regex("\\s+"), " ")
 
     private fun sha256Hex(value: String): String =
         MessageDigest.getInstance("SHA-256")
