@@ -285,8 +285,9 @@ object EcoNetCloudApi {
                             mqtt = EcoNetMqttClient(installationId, mqttClientId, credentials, serviceRole)
                             mqtt.connect()
                             val ping = mqtt.request(JSONObject().put("name", "CLIENT_PING"))
-                            val pingStatus = ping.optInt("statusCode", 0)
-                            if (pingStatus != 0) throw IllegalStateException("MQTT broker connected, but CLIENT_PING returned status $pingStatus.")
+                            val pingStatus = ping.optInt("statusCode", -1)
+                            // Preserve non-zero operation status for diagnosis, but don't assume
+                            // CLIENT_PING status 2 means the MQTT session itself is unusable.
                             val bus = mqtt.request(JSONObject().put("name", "GET_COMPONENTS_ON_BUS"))
                             val busTargets = bus.optJSONArray("targets") ?: JSONArray()
                             val registrationTargets = JSONArray()
@@ -325,7 +326,7 @@ object EcoNetCloudApi {
                                 if (rejected.isNotEmpty()) throw IllegalStateException("MQTT connected and discovered $busTargets component bus target(s), but component registration had failures: ${rejected.joinToString()}")
                                 accepted
                             } else 0
-                            val summary = "MQTT connected; CLIENT_PING acknowledged; discovered ${busTargets.length()} bus target(s); registered $registeredCount installation component(s)."
+                            val summary = "MQTT connected; CLIENT_PING status $pingStatus; discovered ${busTargets.length()} bus target(s); registered $registeredCount installation component(s).";
                             mqtt.disconnect()
                             Handler(Looper.getMainLooper()).post { onSuccess(summary) }
                         } catch (error: Exception) {
@@ -425,11 +426,42 @@ object EcoNetCloudApi {
                         mqtt = EcoNetMqttClient(installationId, mqttClientId, credentials, serviceRole)
                         mqtt.connect()
                         val ping = mqtt.request(JSONObject().put("name", "CLIENT_PING"))
-                        if (ping.optInt("statusCode", 0) != 0) throw IllegalStateException("CLIENT_PING was not acknowledged.")
+                        val pingStatus = ping.optInt("statusCode", -1)
+                        // Keep the complete response: status 2 is not yet understood and
+                        // must not prevent us testing the subsequent documented operations.
+                        val bus = mqtt.request(JSONObject().put("name", "GET_COMPONENTS_ON_BUS"))
+                        val busTargets = bus.optJSONArray("targets") ?: JSONArray()
+                        val registrationTargets = JSONArray()
+                        components.forEach { component ->
+                            if (component.serialNumber.isBlank() || component.serialNumber == "—" ||
+                                component.componentTypeId <= 0 || component.producerCode <= 0 ||
+                                component.hardwareVersion == "—" || component.softwareVersion == "—") return@forEach
+                            val metadata = JSONObject()
+                                .put("componentType", component.componentType.ifBlank { component.name })
+                                .put("componentTypeId", component.componentTypeId)
+                                .put("hardware", component.hardwareVersion)
+                                .put("software", component.softwareVersion)
+                                .put("installationId", installationId)
+                                .put("isHidden", false)
+                                .put("manufacturer", component.producerName.ifBlank { "Unknown" })
+                                .put("manufacturerCode", component.producerCode)
+                                .put("serialNumber", component.serialNumber)
+                            registrationTargets.put(JSONObject().put("component", component.serialNumber).put("parameters", metadata))
+                        }
+                        var registrationResponse = JSONObject().put("skipped", true)
+                        if (registrationTargets.length() > 0) {
+                            registrationResponse = mqtt.request(JSONObject()
+                                .put("name", "REGISTER_COMPONENTS")
+                                .put("targets", registrationTargets))
+                        }
                         val output = JSONObject()
                             .put("installationId", installationId)
                             .put("retrievedAtUtc", java.time.Instant.now().toString())
                             .put("operation", "PARAM_TABLE_DUMP")
+                            .put("clientPingStatus", pingStatus)
+                            .put("clientPingResponse", ping)
+                            .put("getComponentsOnBusResponse", bus)
+                            .put("registerComponentsResponse", registrationResponse)
                             .put("components", JSONArray())
                         val failures = JSONArray()
                         var successCount = 0
