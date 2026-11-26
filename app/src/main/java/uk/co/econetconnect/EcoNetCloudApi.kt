@@ -276,8 +276,8 @@ object EcoNetCloudApi {
                     val mqttClientId = if (serviceRole) {
                         cognitoSubject(idToken) ?: throw IllegalStateException("Authenticated Cognito subject is unavailable.")
                     } else {
-                        session.identityIdResult.value
-                            ?: throw IllegalStateException("Cognito Identity Pool identity ID is unavailable for DEFAULT MQTT login.")
+                        cognitoSubject(idToken)
+                        ?: throw IllegalStateException("Authenticated Cognito user ID (sub) is unavailable.")
                     }
                     Thread {
                         var mqtt: EcoNetMqttClient? = null
@@ -365,8 +365,8 @@ object EcoNetCloudApi {
                 val mqttClientId = if (serviceRole) {
                     cognitoSubject(idToken) ?: throw IllegalStateException("Authenticated Cognito subject unavailable.")
                 } else {
-                    session.identityIdResult.value
-                        ?: throw IllegalStateException("Cognito Identity Pool identity ID unavailable for DEFAULT MQTT login.")
+                    cognitoSubject(idToken)
+                        ?: throw IllegalStateException("Authenticated Cognito user ID (sub) is unavailable.")
                 }
                 Thread {
                     val report = StringBuilder()
@@ -377,7 +377,7 @@ object EcoNetCloudApi {
                         report.appendLine("- ${c.name}: serial=${c.serialNumber}, type=${c.componentType}, typeId=${c.componentTypeId}, producerCode=${c.producerCode}, hardware=${c.hardwareVersion}, software=${c.softwareVersion}, protocol=${c.protocol}")
                     }
                     report.appendLine("Cognito Identity Pool identity ID present: ${session.identityIdResult.value?.isNotBlank() == true}")
-                    report.appendLine("MQTT identity selected: ${if (serviceRole) "service-role subject" else "DEFAULT Cognito Identity Pool identity ID"}")
+                    report.appendLine("MQTT identity selected: Cognito user-pool subject (official client userId path)")
                     report.appendLine("Cognito groups: ${if (groups.isEmpty()) "(none in token)" else groups.joinToString()}")
                     report.appendLine("Credentials: temporary session credentials available (secret values deliberately excluded)")
                     try {
@@ -417,8 +417,8 @@ object EcoNetCloudApi {
                 val mqttClientId = if (serviceRole) {
                     cognitoSubject(idToken) ?: throw IllegalStateException("Authenticated Cognito subject unavailable.")
                 } else {
-                    session.identityIdResult.value
-                        ?: throw IllegalStateException("Cognito Identity Pool identity ID unavailable for DEFAULT MQTT login.")
+                    cognitoSubject(idToken)
+                        ?: throw IllegalStateException("Authenticated Cognito user ID (sub) is unavailable.")
                 }
                 Thread {
                     var mqtt: EcoNetMqttClient? = null
