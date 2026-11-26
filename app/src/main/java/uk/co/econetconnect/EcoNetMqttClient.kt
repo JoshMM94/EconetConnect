@@ -5,37 +5,19 @@ import com.amazonaws.DefaultRequest
 import com.amazonaws.auth.AWS4Signer
 import com.amazonaws.auth.BasicAWSCredentials
 import com.amazonaws.http.HttpMethodName
-import java.net.URI
-import org.eclipse.paho.client.mqttv3.IMqttActionListener
-import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken
-import org.eclipse.paho.client.mqttv3.MqttAsyncClient
-import org.eclipse.paho.client.mqttv3.MqttCallback
-import org.eclipse.paho.client.mqttv3.MqttConnectOptions
-import org.eclipse.paho.client.mqttv3.MqttMessage
-import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
+import okhttp3.*
+import okio.ByteString
 import org.json.JSONObject
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
+import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
-import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
-import java.util.TimeZone
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import javax.crypto.Mac
-import javax.crypto.spec.SecretKeySpec
 
-/**
- * Read-only transport matching the normal-user MQTT protocol used by ecoNET Cloud.
- * No parameter writes are exposed here.
- */
+/** Minimal MQTT 3.1 transport over the same OkHttp WebSocket used by the successful handshake probe. */
 class EcoNetMqttClient(
     private val installationId: String,
     private val mqttUserId: String,
@@ -47,7 +29,6 @@ class EcoNetMqttClient(
         private const val REGION = "eu-central-1"
         private const val SERVICE = "iotdevicegateway"
         private const val ENDPOINT = "a24t7r3f2r1nrr-ats.iot.eu-central-1.amazonaws.com"
-        private const val KEEP_ALIVE_SECONDS = 40
         private const val REQUEST_TIMEOUT_MS = 15_000L
     }
 
@@ -56,194 +37,239 @@ class EcoNetMqttClient(
     private val responseTopic = if (serviceRole) "$installationId/$clientId/serviceResponse" else "$installationId/$clientId/installationResponse"
     private val notificationTopic = if (serviceRole) "$installationId/$clientId/installationNotifications" else "$installationId/installationNotifications"
     private val transaction = AtomicInteger(0)
-    @Volatile private var lastResponse: JSONObject? = null
+    private val packetIds = AtomicInteger(1)
+    private val monitor = Object()
+    private val httpClient = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).build()
+    private val keepAlive = Executors.newSingleThreadScheduledExecutor()
+    @Volatile private var socket: WebSocket? = null
     @Volatile private var connected = false
-    private var mqtt: MqttAsyncClient? = null
+    @Volatile private var connAckCode: Int? = null
+    @Volatile private var connAckError: String? = null
+    @Volatile private var subAckId: Int? = null
+    @Volatile private var subAckCodes: IntArray? = null
+    @Volatile private var lastResponse: JSONObject? = null
+    @Volatile private var socketFailure: String? = null
 
     @Synchronized
     fun connect() {
         check(!connected) { "MQTT client is already connected." }
-        val uri = presignedWebSocketUrl(credentials)
-        val client = MqttAsyncClient(uri, clientId, MemoryPersistence())
-        val options = MqttConnectOptions().apply {
-            mqttVersion = MqttConnectOptions.MQTT_VERSION_3_1
-            isCleanSession = true
-            keepAliveInterval = 60
-            connectionTimeout = 30
-            isAutomaticReconnect = true
-        }
-        val latch = CountDownLatch(1)
-        var failure: Throwable? = null
-        client.setCallback(object : MqttCallback {
-            override fun connectionLost(cause: Throwable?) {
+        val opened = CountDownLatch(1)
+        val request = Request.Builder().url(presignedWebSocketUrl(credentials))
+            .header("Origin", "https://cloud.grant.eu")
+            .header("Sec-WebSocket-Protocol", "mqttv3.1").build()
+        socket = httpClient.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                socket = webSocket
+                opened.countDown()
+            }
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                handleMqttBytes(bytes.toByteArray())
+            }
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                val body = try { response?.body?.string().orEmpty().take(500) } catch (_: Exception) { "" }
+                socketFailure = "${t.javaClass.simpleName}: ${t.message}" +
+                    (response?.let { "; HTTP ${it.code}" } ?: "") + if (body.isNotBlank()) "; $body" else ""
+                synchronized(monitor) { monitor.notifyAll() }
+                opened.countDown()
+            }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 connected = false
-            }
-            override fun messageArrived(topic: String?, message: MqttMessage?) {
-                val payload = message?.payload?.toString(StandardCharsets.UTF_8) ?: return
-                try {
-                    val json = JSONObject(payload)
-                    if (topic == responseTopic) lastResponse = json
-                    else if (topic == notificationTopic) onNotification(json)
-                } catch (_: Exception) { /* Ignore malformed broker payloads. */ }
-            }
-            override fun deliveryComplete(token: IMqttDeliveryToken?) = Unit
-        })
-        client.connect(options, null, object : IMqttActionListener {
-            override fun onSuccess(token: org.eclipse.paho.client.mqttv3.IMqttToken?) {
-                try {
-                    client.subscribe(arrayOf(responseTopic, notificationTopic), intArrayOf(0, 0)).waitForCompletion(15000)
-                    connected = true
-                } catch (error: Throwable) {
-                    failure = error
-                } finally {
-                    latch.countDown()
-                }
-            }
-            override fun onFailure(token: org.eclipse.paho.client.mqttv3.IMqttToken?, error: Throwable?) {
-                failure = error
-                latch.countDown()
+                socketFailure = "WebSocket closed ($code): $reason"
+                synchronized(monitor) { monitor.notifyAll() }
             }
         })
-        if (!latch.await(35, TimeUnit.SECONDS)) {
-            try { client.disconnectForcibly() } catch (_: Exception) {}
-            throw IllegalStateException("Timed out connecting to the ecoNET MQTT broker.")
+        if (!opened.await(30, TimeUnit.SECONDS)) throw IllegalStateException("Timed out opening AWS IoT WebSocket.")
+        socketFailure?.let { throw IllegalStateException("AWS IoT WebSocket failed: $it") }
+
+        // MQTT 3.1 CONNECT: protocol name MQIsdp, level 3, clean-session flag.
+        val connectBody = PacketWriter().mqttString("MQIsdp").byte(3).byte(0x02).short(60)
+            .mqttString(clientId).result()
+        if (socket?.send(ByteString.of(*mqttPacket(0x10, connectBody))) != true) {
+            throw IllegalStateException("Could not send MQTT CONNECT.")
         }
-        failure?.let {
-            val mqttError = it as? org.eclipse.paho.client.mqttv3.MqttException
-            val reason = mqttError?.reasonCode?.toString() ?: "n/a"
-            val detail = it.cause?.message?.takeIf { message -> message.isNotBlank() }
-            throw IllegalStateException(
-                "ecoNET MQTT connection failed (reason code $reason): ${detail ?: it.message ?: it.javaClass.simpleName}",
-                it
-            )
+        waitUntil(10_000L, "Timed out waiting for MQTT CONNACK.") {
+            connAckCode != null || connAckError != null || socketFailure != null
         }
-        mqtt = client
+        socketFailure?.let { throw IllegalStateException("WebSocket closed before MQTT CONNACK: $it") }
+        connAckError?.let { throw IllegalStateException(it) }
+        val code = connAckCode ?: throw IllegalStateException("MQTT broker did not return CONNACK.")
+        if (code != 0) throw IllegalStateException("MQTT CONNACK rejected the client (return code $code).")
+
+        val subscribeId = nextPacketId()
+        val subscribeBody = PacketWriter().short(subscribeId)
+            .mqttString(responseTopic).byte(0).mqttString(notificationTopic).byte(0).result()
+        if (socket?.send(ByteString.of(*mqttPacket(0x82, subscribeBody))) != true) {
+            throw IllegalStateException("Could not send MQTT SUBSCRIBE.")
+        }
+        waitUntil(10_000L, "Timed out waiting for MQTT SUBACK.") {
+            subAckId == subscribeId || socketFailure != null
+        }
+        socketFailure?.let { throw IllegalStateException("MQTT connection lost during SUBSCRIBE: $it") }
+        val codes = subAckCodes ?: throw IllegalStateException("Broker did not acknowledge MQTT subscriptions.")
+        if (codes.any { it == 0x80 || it > 2 }) throw IllegalStateException("MQTT subscription rejected: ${codes.joinToString()}")
+        connected = true
+        keepAlive.scheduleAtFixedRate({
+            if (connected) socket?.send(ByteString.of(0xC0.toByte(), 0x00.toByte()))
+        }, 40, 40, TimeUnit.SECONDS)
     }
 
-    /** Performs an independent HTTP WebSocket upgrade probe and returns safe response diagnostics. */
     fun diagnoseWebSocketHandshake(): String {
         val uri = presignedWebSocketUrl(credentials)
-        val query = uri.substringAfter("?", "")
-        val safeQuery = query.split("&").mapNotNull { part ->
+        val safeQuery = uri.substringAfter("?", "").split("&").mapNotNull { part ->
             val key = part.substringBefore("=")
             if (key in setOf("X-Amz-Algorithm", "X-Amz-Date", "X-Amz-Expires", "X-Amz-SignedHeaders")) part else null
         }.joinToString("&")
-        val report = StringBuilder()
-            .appendLine("AWS IoT endpoint: $ENDPOINT")
-            .appendLine("Signing service: $SERVICE")
-            .appendLine("Region: $REGION")
-            .appendLine("MQTT subprotocol: mqttv3.1")
-            .appendLine("Signed query (secrets removed): $safeQuery")
-            .appendLine("Temporary session token present: ${credentials.sessionToken.isNotBlank()}")
         val latch = CountDownLatch(1)
-        val client = OkHttpClient.Builder().callTimeout(25, TimeUnit.SECONDS).build()
-        val request = Request.Builder().url(uri)
-            .header("Origin", "https://cloud.grant.eu")
-            .header("Sec-WebSocket-Protocol", "mqttv3.1")
-            .build()
         var outcome = "No WebSocket response received."
-        client.newWebSocket(request, object : WebSocketListener() {
+        val probe = OkHttpClient.Builder().callTimeout(25, TimeUnit.SECONDS).build()
+        probe.newWebSocket(Request.Builder().url(uri).header("Origin", "https://cloud.grant.eu")
+            .header("Sec-WebSocket-Protocol", "mqttv3.1").build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                outcome = "HTTP status: ${response.code}\nUpgrade accepted: yes\nSelected protocol: ${response.header("Sec-WebSocket-Protocol") ?: "not returned"}"
-                webSocket.close(1000, "Diagnostic probe complete")
-                latch.countDown()
+                outcome = "HTTP ${response.code}; Upgrade accepted: yes; protocol: ${response.header("Sec-WebSocket-Protocol") ?: "not returned"}"
+                webSocket.close(1000, "Diagnostic complete"); latch.countDown()
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                val body = try { response?.body?.string().orEmpty().take(1200) } catch (_: Exception) { "" }
-                outcome = buildString {
-                    append("Upgrade accepted: no\n")
-                    append("Exception: ${t.javaClass.simpleName}: ${t.message}\n")
-                    append("HTTP status: ${response?.code ?: "no HTTP response"}\n")
-                    response?.headers?.names()?.sorted()?.forEach { name ->
-                        if (name.lowercase() in setOf("x-amzn-errortype", "x-amzn-requestid", "x-amz-cf-id", "date", "server", "content-type")) {
-                            append("$name: ${response.header(name)}\n")
-                        }
-                    }
-                    if (body.isNotBlank()) append("Response body: $body")
-                }
+                outcome = "Upgrade accepted: no; ${t.javaClass.simpleName}: ${t.message}; HTTP ${response?.code ?: "no response"}"
                 latch.countDown()
             }
         })
-        if (!latch.await(27, TimeUnit.SECONDS)) outcome = "WebSocket diagnostic timed out after 27 seconds."
-        client.dispatcher.executorService.shutdown()
-        report.appendLine(outcome)
-        return report.toString()
+        if (!latch.await(27, TimeUnit.SECONDS)) outcome = "WebSocket diagnostic timed out."
+        probe.dispatcher.executorService.shutdown()
+        return "AWS IoT endpoint: $ENDPOINT\nSigning service: $SERVICE\nRegion: $REGION\nMQTT subprotocol: mqttv3.1\nSigned query (secrets removed): $safeQuery\nTemporary session token present: ${credentials.sessionToken.isNotBlank()}\n$outcome"
     }
 
-    /**
-     * Sends one read-only MQTT operation and waits for its matching transaction response.
-     */
     @Synchronized
     fun request(operation: JSONObject, timeoutMs: Long = REQUEST_TIMEOUT_MS): JSONObject {
         check(connected) { "MQTT is not connected." }
         val id = transaction.incrementAndGet().toString()
-        val envelope = JSONObject().put("transactionId", id).put("operations", org.json.JSONArray().put(operation))
+        val envelope = JSONObject().put("transactionId", id)
+            .put("operations", org.json.JSONArray().put(operation))
         lastResponse = null
-        mqtt!!.publish(requestTopic, MqttMessage(envelope.toString().toByteArray(StandardCharsets.UTF_8)).apply {
-            qos = 0
-            isRetained = false
-        })
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            val response = lastResponse
-            if (response != null && response.optString("transactionId") == id) {
-                val operations = response.optJSONArray("operations")
-                    ?: throw IllegalStateException("MQTT response did not contain operations.")
-                if (operations.length() == 0) throw IllegalStateException("MQTT response contained no operation result.")
-                return operations.getJSONObject(0)
-            }
-            Thread.sleep(50)
+        val payload = envelope.toString().toByteArray(StandardCharsets.UTF_8)
+        val body = PacketWriter().mqttString(requestTopic).bytes(payload).result()
+        if (socket?.send(ByteString.of(*mqttPacket(0x30, body))) != true) {
+            throw IllegalStateException("Could not publish MQTT request.")
         }
-        throw IllegalStateException("ecoNET MQTT request timed out after ${timeoutMs}ms.")
+        waitUntil(timeoutMs, "ecoNET MQTT request timed out after ${timeoutMs}ms.") {
+            lastResponse?.optString("transactionId") == id || socketFailure != null
+        }
+        socketFailure?.let { throw IllegalStateException("MQTT connection lost: $it") }
+        val response = lastResponse ?: throw IllegalStateException("No matching MQTT response was received.")
+        if (response.optString("transactionId") != id) throw IllegalStateException("Received an unrelated MQTT response.")
+        val operations = response.optJSONArray("operations")
+            ?: throw IllegalStateException("MQTT response did not contain operations.")
+        if (operations.length() == 0) throw IllegalStateException("MQTT response contained no operation result.")
+        return operations.getJSONObject(0)
     }
 
     @Synchronized
     fun disconnect() {
         connected = false
-        try { mqtt?.disconnectForcibly() } catch (_: Exception) {}
-        try { mqtt?.close() } catch (_: Exception) {}
-        mqtt = null
+        try { socket?.send(ByteString.of(0xE0.toByte(), 0x00.toByte())) } catch (_: Exception) {}
+        try { socket?.close(1000, "Client disconnect") } catch (_: Exception) {}
+        socket = null
+        keepAlive.shutdownNow()
+        httpClient.dispatcher.executorService.shutdown()
+        httpClient.connectionPool.evictAll()
+    }
+
+    private fun handleMqttBytes(packet: ByteArray) {
+        if (packet.size < 2) return
+        val header = packet[0].toInt() and 0xFF
+        var index = 1
+        var remaining = 0
+        var multiplier = 1
+        var digit: Int
+        do {
+            if (index >= packet.size) return
+            digit = packet[index++].toInt() and 0xFF
+            remaining += (digit and 0x7F) * multiplier
+            multiplier *= 128
+        } while ((digit and 0x80) != 0 && multiplier <= 128 * 128 * 128 * 128)
+        if (index + remaining > packet.size) return
+        val end = index + remaining
+        when (header ushr 4) {
+            2 -> if (remaining >= 2) {
+                connAckCode = packet[index + 1].toInt() and 0xFF
+                if (connAckCode != 0) connAckError = "MQTT CONNACK rejected connection (return code $connAckCode)."
+                synchronized(monitor) { monitor.notifyAll() }
+            }
+            9 -> if (remaining >= 3) {
+                subAckId = ((packet[index].toInt() and 0xFF) shl 8) or (packet[index + 1].toInt() and 0xFF)
+                subAckCodes = (index + 2 until end).map { packet[it].toInt() and 0xFF }.toIntArray()
+                synchronized(monitor) { monitor.notifyAll() }
+            }
+            3 -> if (remaining >= 2) {
+                val topicLength = ((packet[index].toInt() and 0xFF) shl 8) or (packet[index + 1].toInt() and 0xFF)
+                var payloadStart = index + 2 + topicLength
+                if (payloadStart > end) return
+                val topic = String(packet, index + 2, topicLength, StandardCharsets.UTF_8)
+                val qos = (header ushr 1) and 0x03
+                if (qos > 0) payloadStart += 2
+                if (payloadStart > end) return
+                val text = String(packet, payloadStart, end - payloadStart, StandardCharsets.UTF_8)
+                try {
+                    val json = JSONObject(text)
+                    when (topic) {
+                        responseTopic -> { lastResponse = json; synchronized(monitor) { monitor.notifyAll() } }
+                        notificationTopic -> onNotification(json)
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    private fun waitUntil(timeoutMs: Long, timeoutMessage: String, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        synchronized(monitor) {
+            while (!condition()) {
+                val remaining = deadline - System.currentTimeMillis()
+                if (remaining <= 0) throw IllegalStateException(timeoutMessage)
+                monitor.wait(remaining)
+            }
+        }
+    }
+
+    private fun nextPacketId(): Int = ((packetIds.getAndIncrement() - 1) % 65535) + 1
+
+    private fun mqttPacket(header: Int, body: ByteArray): ByteArray {
+        val out = java.io.ByteArrayOutputStream(body.size + 5)
+        out.write(header)
+        var length = body.size
+        do {
+            var digit = length % 128
+            length /= 128
+            if (length > 0) digit = digit or 0x80
+            out.write(digit)
+        } while (length > 0)
+        out.write(body)
+        return out.toByteArray()
     }
 
     private fun presignedWebSocketUrl(creds: AWSTemporaryCredentials): String {
-        // Use the same AWS SDK SigV4 presigner as the REST client. The official
-        // ecoNET web client delegates this to Amplify's AWS signer; hand-built
-        // canonical requests are too easy to subtly mismatch.
         val request = DefaultRequest<Any>(SERVICE).apply {
             setEndpoint(URI.create("https://$ENDPOINT"))
             setResourcePath("/mqtt")
             setHttpMethod(HttpMethodName.GET)
         }
-        // ecoNET's signer deliberately excludes the IoT session token from the
-        // SigV4 canonical query, then appends X-Amz-Security-Token afterwards.
-        // The token is still required by AWS, but must not be part of this signature.
-        val awsCredentials = BasicAWSCredentials(
-            creds.accessKeyId, creds.secretAccessKey
-        )
-        val signer = AWS4Signer().apply {
-            setRegionName(REGION)
-            setServiceName(SERVICE)
-        }
-        signer.presignRequest(request, awsCredentials, Date(System.currentTimeMillis() + 900_000L))
-        val query = request.parameters.entries.joinToString("&") { entry ->
-            "${encode(entry.key)}=${encode(entry.value)}"
-        }
-        val token = encode(creds.sessionToken)
-        return "wss://$ENDPOINT/mqtt?$query&X-Amz-Security-Token=$token"
+        val signer = AWS4Signer().apply { setRegionName(REGION); setServiceName(SERVICE) }
+        signer.presignRequest(request, BasicAWSCredentials(creds.accessKeyId, creds.secretAccessKey),
+            Date(System.currentTimeMillis() + 900_000L))
+        val query = request.parameters.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
+        return "wss://$ENDPOINT/mqtt?$query&X-Amz-Security-Token=${encode(creds.sessionToken)}"
     }
 
     private fun encode(value: String): String =
         URLEncoder.encode(value, "UTF-8").replace("+", "%20").replace("%7E", "~")
 
-    private fun sha256(value: ByteArray): ByteArray =
-        MessageDigest.getInstance("SHA-256").digest(value)
-
-    private fun hmac(key: ByteArray, value: String): ByteArray =
-        Mac.getInstance("HmacSHA256").run {
-            init(SecretKeySpec(key, "HmacSHA256"))
-            doFinal(value.toByteArray(StandardCharsets.UTF_8))
+    private class PacketWriter {
+        private val out = java.io.ByteArrayOutputStream()
+        fun byte(value: Int) = apply { out.write(value and 0xFF) }
+        fun short(value: Int) = apply { out.write((value ushr 8) and 0xFF); out.write(value and 0xFF) }
+        fun bytes(value: ByteArray) = apply { out.write(value) }
+        fun mqttString(value: String) = apply {
+            val b = value.toByteArray(StandardCharsets.UTF_8); short(b.size); out.write(b)
         }
-
-    private fun hex(bytes: ByteArray): String =
-        bytes.joinToString("") { "%02x".format(it) }
+        fun result(): ByteArray = out.toByteArray()
+    }
 }
