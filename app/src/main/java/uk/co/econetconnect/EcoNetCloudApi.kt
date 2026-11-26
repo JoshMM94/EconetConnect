@@ -215,11 +215,16 @@ object EcoNetCloudApi {
                                 if (producer.isBlank() || component.hardwareVersion.isBlank() ||
                                     component.softwareVersion.isBlank() || component.hardwareVersion == "—" ||
                                     component.softwareVersion == "—") return@mapNotNull null
-                                val base = "/prod/v1/profiles/$APP_ID/" + java.net.URLEncoder.encode(producer, "UTF-8") +
-                                    "/" + java.net.URLEncoder.encode(component.hardwareVersion, "UTF-8") +
-                                    "/" + java.net.URLEncoder.encode(component.softwareVersion, "UTF-8") + "/web"
-                                val profile = signedGet("$base/profile.json", credentials)
-                                val translations = signedGet("$base/trans_en.json", credentials)
+                                // ecoNET's web client retrieves profiles from the Archives API,
+                                // not the signed AWS execute-api endpoint.
+                                val profileName = component.componentType.ifBlank { component.name }
+                                val encodedName = java.net.URLEncoder.encode(profileName, "UTF-8")
+                                val encodedHardware = java.net.URLEncoder.encode(component.hardwareVersion, "UTF-8")
+                                val encodedSoftware = java.net.URLEncoder.encode(component.softwareVersion, "UTF-8")
+                                val profilePath = "/v1/profiles/" + component.producerCode + "/" + encodedName + "/" + encodedHardware + "/" + encodedSoftware + "/web/profile.json"
+                                val translationsPath = "/v1/profiles/" + encodedName + "/" + encodedHardware + "/" + encodedSoftware + "/web/trans_en.json"
+                                val profile = fetchArchiveResource(profilePath)
+                                val translations = fetchArchiveResource(translationsPath)
                                 EcoNetControllerProfile(component.name, producer, component.hardwareVersion,
                                     component.softwareVersion, JSONObject(profile), JSONObject(translations))
                             }
@@ -347,6 +352,27 @@ object EcoNetCloudApi {
             val groups = JSONObject(decoded).optJSONArray("cognito:groups") ?: return emptyList()
             buildList { for (i in 0 until groups.length()) add(groups.optString(i)) }
         } catch (_: Exception) { emptyList() }
+    }
+
+    private fun fetchArchiveResource(path: String): String {
+        val url = URL("https://api.econetcloud.eu/api" + path)
+        val connection = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 20000
+            readTimeout = 30000
+            setRequestProperty("Accept", "application/json")
+        }
+        try {
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) {
+                throw IllegalStateException("Controller profile request failed (HTTP " + code + ") at " + path + ".")
+            }
+            return body
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun signedGet(path: String, credentials: AWSTemporaryCredentials): String {
