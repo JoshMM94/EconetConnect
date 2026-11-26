@@ -30,6 +30,7 @@ class EcoNetMqttClient(
     private val installationId: String,
     private val identityId: String,
     private val credentials: AWSTemporaryCredentials,
+    private val serviceRole: Boolean = false,
     private val onNotification: (JSONObject) -> Unit = {}
 ) {
     companion object {
@@ -41,9 +42,9 @@ class EcoNetMqttClient(
     }
 
     private val clientId = "$identityId-${System.currentTimeMillis()}"
-    private val requestTopic = "$installationId/$clientId/installationRequest"
-    private val responseTopic = "$installationId/$clientId/installationResponse"
-    private val notificationTopic = "$installationId/installationNotifications"
+    private val requestTopic = if (serviceRole) "$installationId/$clientId/serviceRequest" else "$installationId/$clientId/installationRequest"
+    private val responseTopic = if (serviceRole) "$installationId/$clientId/serviceResponse" else "$installationId/$clientId/installationResponse"
+    private val notificationTopic = if (serviceRole) "$installationId/$clientId/installationNotifications" else "$installationId/installationNotifications"
     private val transaction = AtomicInteger(0)
     @Volatile private var lastResponse: JSONObject? = null
     @Volatile private var connected = false

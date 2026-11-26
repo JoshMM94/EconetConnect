@@ -266,13 +266,17 @@ object EcoNetCloudApi {
                         ?: throw IllegalStateException("AWS temporary credentials could not be obtained.")
                     val idToken = session.userPoolTokensResult.value?.idToken
                     val groups = idToken?.let { cognitoGroups(it) }.orEmpty()
-                    if (groups.isNotEmpty()) {
-                        throw IllegalStateException("This account has special ecoNET role groups ($groups). The current MQTT topic implementation supports standard customer accounts only; refusing to connect using the wrong topic permissions.")
+                    // ecoNET maps ServiceCompanyManagers to SERVICE_ADMIN (role 10).
+                    // The official web client uses serviceRequest/serviceResponse for this role.
+                    val serviceRole = groups.contains("ServiceCompanyManagers")
+                    val unsupportedGroups = groups.filterNot { it == "ServiceCompanyManagers" }
+                    if (unsupportedGroups.isNotEmpty()) {
+                        throw IllegalStateException("Unsupported ecoNET role groups ($unsupportedGroups). Only standard customer and ServiceCompanyManagers topic families are implemented.")
                     }
                     Thread {
                         var mqtt: EcoNetMqttClient? = null
                         try {
-                            mqtt = EcoNetMqttClient(installationId, identityId, credentials)
+                            mqtt = EcoNetMqttClient(installationId, identityId, credentials, serviceRole)
                             mqtt.connect()
                             val ping = mqtt.request(JSONObject().put("name", "CLIENT_PING"))
                             val pingStatus = ping.optInt("statusCode", 0)
