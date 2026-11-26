@@ -271,13 +271,14 @@ object EcoNetCloudApi {
                         ?: throw IllegalStateException("AWS temporary credentials could not be obtained.")
                     val groups = cognitoGroups(idToken)
                     val serviceRole = groups.contains("ServiceCompanyManagers")
-                    // Official ecoNET DEFAULT users use the Cognito Identity Pool identity ID
-                    // as MQTT client ID. Service-role identity is kept separate for later mapping.
+                    // Exact official-client flow: installations/initializeInstallationAndConnect
+                    // passes Amplify Auth.fetchAuthSession().identityId as userId for DEFAULT.
+                    // RU then appends "-<timestamp>" to this value when building MQTT clientId.
                     val mqttClientId = if (serviceRole) {
                         cognitoSubject(idToken) ?: throw IllegalStateException("Authenticated Cognito subject is unavailable.")
                     } else {
-                        cognitoSubject(idToken)
-                        ?: throw IllegalStateException("Authenticated Cognito user ID (sub) is unavailable.")
+                        session.identityIdResult.value
+                            ?: throw IllegalStateException("Cognito Identity Pool identity ID is unavailable for DEFAULT MQTT login.")
                     }
                     Thread {
                         var mqtt: EcoNetMqttClient? = null
@@ -377,7 +378,7 @@ object EcoNetCloudApi {
                         report.appendLine("- ${c.name}: serial=${c.serialNumber}, type=${c.componentType}, typeId=${c.componentTypeId}, producerCode=${c.producerCode}, hardware=${c.hardwareVersion}, software=${c.softwareVersion}, protocol=${c.protocol}")
                     }
                     report.appendLine("Cognito Identity Pool identity ID present: ${session.identityIdResult.value?.isNotBlank() == true}")
-                    report.appendLine("MQTT identity selected: Cognito user-pool subject (official client userId path)")
+                    report.appendLine("MQTT identity selected: DEFAULT Cognito Identity Pool identity ID (official userId path)")
                     report.appendLine("Cognito groups: ${if (groups.isEmpty()) "(none in token)" else groups.joinToString()}")
                     report.appendLine("Credentials: temporary session credentials available (secret values deliberately excluded)")
                     try {
