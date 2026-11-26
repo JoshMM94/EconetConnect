@@ -103,6 +103,9 @@ fun EconetConnectScreen(
     var profileStatus by remember { mutableStateOf("Controller profile not loaded") }
     var mqttStatus by remember { mutableStateOf("MQTT not connected") }
     var parameterDump by remember { mutableStateOf("") }
+    var diagnosticReport by remember { mutableStateOf("") }
+    var diagnosticStatus by remember { mutableStateOf("Diagnostics not run") }
+    var isDiagnosing by remember { mutableStateOf(false) }
     var dumpStatus by remember { mutableStateOf("No parameter dump retrieved yet") }
     var isDumping by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
@@ -223,6 +226,35 @@ fun EconetConnectScreen(
                             enabled = !isDumping,
                             modifier = Modifier.fillMaxWidth()
                         ) { Text(if (isDumping) "Retrieving parameter dump…" else "Retrieve parameter dump") }
+                        Button(
+                            onClick = {
+                                isDiagnosing = true
+                                diagnosticStatus = "Running signed WebSocket handshake and installation metadata checks…"
+                                diagnosticReport = ""
+                                EcoNetCloudApi.runTransportDiagnostics(
+                                    selected.id, details.components,
+                                    onSuccess = { result ->
+                                        diagnosticReport = result
+                                        diagnosticStatus = "Diagnostics complete. Copy the report and paste it into this chat."
+                                        isDiagnosing = false
+                                    },
+                                    onError = { error ->
+                                        diagnosticStatus = "Diagnostics failed to run: $error"
+                                        isDiagnosing = false
+                                    }
+                                )
+                            },
+                            enabled = !isDiagnosing,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(if (isDiagnosing) "Running diagnostics…" else "Run full connection diagnostics") }
+                        Text(diagnosticStatus, style = MaterialTheme.typography.bodySmall)
+                        if (diagnosticReport.isNotBlank()) {
+                            Button(onClick = { clipboard.setText(AnnotatedString(diagnosticReport)) }) {
+                                Text("Copy diagnostic report")
+                            }
+                            Text(diagnosticReport.take(1400) + if (diagnosticReport.length > 1400) "\\n… preview truncated; copy the full report above." else "",
+                                style = MaterialTheme.typography.bodySmall)
+                        }
                         Text("Diagnostics · read-only", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Text(dumpStatus, style = MaterialTheme.typography.bodySmall)
                         if (parameterDump.isNotBlank()) {

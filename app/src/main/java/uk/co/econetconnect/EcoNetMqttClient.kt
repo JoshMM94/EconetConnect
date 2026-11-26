@@ -9,6 +9,11 @@ import org.eclipse.paho.client.mqttv3.MqttConnectOptions
 import org.eclipse.paho.client.mqttv3.MqttMessage
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import org.json.JSONObject
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -108,6 +113,56 @@ class EcoNetMqttClient(
             )
         }
         mqtt = client
+    }
+
+    /** Performs an independent HTTP WebSocket upgrade probe and returns safe response diagnostics. */
+    fun diagnoseWebSocketHandshake(): String {
+        val uri = presignedWebSocketUrl(credentials)
+        val query = uri.substringAfter("?", "")
+        val safeQuery = query.split("&").mapNotNull { part ->
+            val key = part.substringBefore("=")
+            if (key in setOf("X-Amz-Algorithm", "X-Amz-Date", "X-Amz-Expires", "X-Amz-SignedHeaders")) part else null
+        }.joinToString("&")
+        val report = StringBuilder()
+            .appendLine("AWS IoT endpoint: $ENDPOINT")
+            .appendLine("Signing service: $SERVICE")
+            .appendLine("Region: $REGION")
+            .appendLine("MQTT subprotocol: mqttv3.1")
+            .appendLine("Signed query (secrets removed): $safeQuery")
+            .appendLine("Temporary session token present: ${credentials.sessionToken.isNotBlank()}")
+        val latch = CountDownLatch(1)
+        val client = OkHttpClient.Builder().callTimeout(25, TimeUnit.SECONDS).build()
+        val request = Request.Builder().url(uri)
+            .header("Origin", "https://cloud.grant.eu")
+            .header("Sec-WebSocket-Protocol", "mqttv3.1")
+            .build()
+        var outcome = "No WebSocket response received."
+        client.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                outcome = "HTTP status: ${response.code}\nUpgrade accepted: yes\nSelected protocol: ${response.header("Sec-WebSocket-Protocol") ?: "not returned"}"
+                webSocket.close(1000, "Diagnostic probe complete")
+                latch.countDown()
+            }
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                val body = try { response?.body?.string().orEmpty().take(1200) } catch (_: Exception) { "" }
+                outcome = buildString {
+                    append("Upgrade accepted: no\n")
+                    append("Exception: ${t.javaClass.simpleName}: ${t.message}\n")
+                    append("HTTP status: ${response?.code ?: "no HTTP response"}\n")
+                    response?.headers?.names()?.sorted()?.forEach { name ->
+                        if (name.lowercase() in setOf("x-amzn-errortype", "x-amzn-requestid", "x-amz-cf-id", "date", "server", "content-type")) {
+                            append("$name: ${response.header(name)}\n")
+                        }
+                    }
+                    if (body.isNotBlank()) append("Response body: $body")
+                }
+                latch.countDown()
+            }
+        })
+        if (!latch.await(27, TimeUnit.SECONDS)) outcome = "WebSocket diagnostic timed out after 27 seconds."
+        client.dispatcher.executorService.shutdown()
+        report.appendLine(outcome)
+        return report.toString()
     }
 
     /**

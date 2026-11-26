@@ -221,10 +221,10 @@ object EcoNetCloudApi {
                                 val encodedName = java.net.URLEncoder.encode(profileName, "UTF-8")
                                 val encodedHardware = java.net.URLEncoder.encode(component.hardwareVersion, "UTF-8")
                                 val encodedSoftware = java.net.URLEncoder.encode(component.softwareVersion, "UTF-8")
-                                val profilePath = "/v1/profiles/" + component.producerCode + "/" + encodedName + "/" + encodedHardware + "/" + encodedSoftware + "/web/profile.json"
-                                val translationsPath = "/v1/profiles/" + component.producerCode + "/" + encodedName + "/" + encodedHardware + "/" + encodedSoftware + "/web/trans_en.json"
-                                val profile = fetchArchiveResource(profilePath)
-                                val translations = fetchArchiveResource(translationsPath)
+                                val profilePath = "/prod/v1/profiles/" + APP_ID + "/" + encodedName + "/" + encodedHardware + "/" + encodedSoftware + "/web/profile.json"
+                                val translationsPath = "/prod/v1/profiles/" + APP_ID + "/" + encodedName + "/" + encodedHardware + "/" + encodedSoftware + "/web/trans_en.json"
+                                val profile = signedGet(profilePath, credentials)
+                                val translations = signedGet(translationsPath, credentials)
                                 EcoNetControllerProfile(component.name, producer, component.hardwareVersion,
                                     component.softwareVersion, JSONObject(profile), JSONObject(translations))
                             }
@@ -342,6 +342,51 @@ object EcoNetCloudApi {
         )
     }
 
+
+    fun runTransportDiagnostics(
+        installationId: String,
+        components: List<EcoNetComponent>,
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        Amplify.Auth.fetchAuthSession({ authSession ->
+            try {
+                val session = authSession as? AWSCognitoAuthSession
+                    ?: throw IllegalStateException("Cognito session unavailable.")
+                if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
+                val identityId = session.identityIdResult.value
+                    ?: throw IllegalStateException("Cognito Identity ID unavailable.")
+                val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
+                    ?: throw IllegalStateException("AWS temporary credentials unavailable.")
+                val groups = session.userPoolTokensResult.value?.idToken?.let { cognitoGroups(it) }.orEmpty()
+                Thread {
+                    val report = StringBuilder()
+                    report.appendLine("Econet Connect transport diagnostics")
+                    report.appendLine("Installation ID: $installationId")
+                    report.appendLine("Components returned by installation API: ${components.size}")
+                    components.forEach { c ->
+                        report.appendLine("- ${c.name}: serial=${c.serialNumber}, type=${c.componentType}, typeId=${c.componentTypeId}, producerCode=${c.producerCode}, hardware=${c.hardwareVersion}, software=${c.softwareVersion}, protocol=${c.protocol}")
+                    }
+                    report.appendLine("Cognito identity ID present: ${identityId.isNotBlank()}")
+                    report.appendLine("Cognito groups: ${if (groups.isEmpty()) "(none in token)" else groups.joinToString()}")
+                    report.appendLine("Credentials: temporary session credentials available (secret values deliberately excluded)")
+                    try {
+                        val probe = EcoNetMqttClient(installationId, identityId, credentials,
+                            groups.contains("ServiceCompanyManagers"))
+                        report.appendLine()
+                        report.appendLine("AWS IoT WebSocket handshake probe")
+                        report.append(probe.diagnoseWebSocketHandshake())
+                        probe.disconnect()
+                    } catch (e: Exception) {
+                        report.appendLine("Probe setup failed: ${e.message}")
+                    }
+                    Handler(Looper.getMainLooper()).post { onSuccess(report.toString()) }
+                }.start()
+            } catch (e: Exception) {
+                onError(e.message ?: "Could not prepare transport diagnostics.")
+            }
+        }, { e -> onError(e.localizedMessage ?: "Could not retrieve authenticated AWS session.") })
+    }
 
     fun fetchParameterTableDump(
         installationId: String,
