@@ -3,7 +3,7 @@ package uk.co.econetconnect
 import com.amplifyframework.auth.AWSTemporaryCredentials
 import com.amazonaws.DefaultRequest
 import com.amazonaws.auth.AWS4Signer
-import com.amazonaws.auth.BasicSessionCredentials
+import com.amazonaws.auth.BasicAWSCredentials
 import com.amazonaws.http.HttpMethodName
 import java.net.URI
 import org.eclipse.paho.client.mqttv3.IMqttActionListener
@@ -214,8 +214,11 @@ class EcoNetMqttClient(
             setResourcePath("/mqtt")
             setHttpMethod(HttpMethodName.GET)
         }
-        val awsCredentials = BasicSessionCredentials(
-            creds.accessKeyId, creds.secretAccessKey, creds.sessionToken
+        // ecoNET's signer deliberately excludes the IoT session token from the
+        // SigV4 canonical query, then appends X-Amz-Security-Token afterwards.
+        // The token is still required by AWS, but must not be part of this signature.
+        val awsCredentials = BasicAWSCredentials(
+            creds.accessKeyId, creds.secretAccessKey
         )
         val signer = AWS4Signer().apply {
             setRegionName(REGION)
@@ -225,7 +228,7 @@ class EcoNetMqttClient(
         val query = request.parameters.entries.joinToString("&") { entry ->
             "${encode(entry.key)}=${encode(entry.value)}"
         }
-        return "wss://$ENDPOINT/mqtt?$query"
+        val token = encode(creds.sessionToken)\n        return "wss://$ENDPOINT/mqtt?$query&X-Amz-Security-Token=$token"
     }
 
     private fun encode(value: String): String =
