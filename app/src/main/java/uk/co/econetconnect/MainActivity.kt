@@ -3,6 +3,7 @@ package uk.co.econetconnect
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -55,11 +56,25 @@ fun EconetConnectScreen(
     var isSignedIn by remember { mutableStateOf(false) }
     var installations by remember { mutableStateOf<List<EcoNetInstallation>>(emptyList()) }
     var installationsLoaded by remember { mutableStateOf(false) }
+    var selectedInstallation by remember { mutableStateOf<EcoNetInstallation?>(null) }
+    var installationDetails by remember { mutableStateOf<EcoNetInstallationDetails?>(null) }
     var status by remember { mutableStateOf(initializationError ?: "Not connected") }
 
     fun showError(message: String) {
         isLoading = false
         status = message
+    }
+
+    fun openInstallation(installation: EcoNetInstallation) {
+        selectedInstallation = installation
+        installationDetails = null
+        isLoading = true
+        status = "Opening installation and retrieving configuration…"
+        EcoNetCloudApi.fetchInstallationDetails(
+            installation.id,
+            onSuccess = { details -> installationDetails = details; isLoading = false; status = "Installation details retrieved." },
+            onError = { message -> isLoading = false; status = message }
+        )
     }
 
     fun loadInstallations() {
@@ -102,7 +117,48 @@ fun EconetConnectScreen(
                 Text("Service Edition · Cloud connection")
                 HorizontalDivider()
 
-                if (isSignedIn) {
+                if (selectedInstallation != null) {
+                    val selected = selectedInstallation!!
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        TextButton(onClick = { selectedInstallation = null; installationDetails = null; status = "Installation list" }) {
+                            Text("← Installations")
+                        }
+                        TextButton(onClick = { openInstallation(selected) }, enabled = !isLoading) { Text("Refresh") }
+                    }
+                    Text(installationDetails?.name ?: selected.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Serial: ${selected.factoryNumber}")
+                    if (isLoading && installationDetails == null) CircularProgressIndicator()
+                    installationDetails?.let { details ->
+                        ElevatedCard(modifier = Modifier.fillMaxWidth().clickable(enabled = !isLoading) { openInstallation(installation) }) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                                Text("Installation status", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Text(if (details.connected) "Connected" else "Not connected")
+                                if (details.hasAlarms) Text("Alarms present", color = MaterialTheme.colorScheme.error)
+                                Text("Software: ${details.softwareVersion}")
+                                Text("Hardware: ${details.hardwareVersion}")
+                                if (details.address.isNotBlank()) Text(details.address)
+                            }
+                        }
+                        Text("Components (${details.components.size})", style = MaterialTheme.typography.titleLarge)
+                        if (details.components.isEmpty()) Text("No components returned by the details endpoint.")
+                        details.components.forEach { component ->
+                            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(component.name, fontWeight = FontWeight.SemiBold)
+                                    Text("Serial: ${component.serialNumber}")
+                                    Text("Software: ${component.softwareVersion} · Hardware: ${component.hardwareVersion}")
+                                    Text("Protocol: ${component.protocol}", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                        if (details.invalidComponents.isNotEmpty()) {
+                            Text("Components requiring attention", style = MaterialTheme.typography.titleMedium)
+                            details.invalidComponents.forEach { Text("• $it", color = MaterialTheme.colorScheme.error) }
+                        }
+                        HorizontalDivider()
+                        Text("Live telemetry and service controls are the next stage: authenticated AWS IoT connection and the official MQTT protocol.")
+                    }
+                } else if (isSignedIn) {
                     Text("Cloud account", style = MaterialTheme.typography.titleLarge)
                     Text("Signed in as $email")
                     Button(
