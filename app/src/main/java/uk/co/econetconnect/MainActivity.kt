@@ -44,6 +44,43 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
+private fun CircuitHomeScreen(
+    installationName: String,
+    circuitLabel: String,
+    connectionLabel: String
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Home", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(installationName, style = MaterialTheme.typography.bodyMedium)
+        Text(circuitLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(connectionLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+
+        ParameterHomeCard("Target Room Temp", "Not loaded yet", "Requested room temperature setpoint")
+        ParameterHomeCard("Current Room Temp", "Not loaded yet", "Measured room temperature")
+        ParameterHomeCard("Hysteresis", "Not loaded yet", "Room temperature switching differential")
+        ParameterHomeCard("Weather Compensation", "Not loaded yet", "Heating curve and curve shift")
+    }
+}
+
+@Composable
+private fun ParameterHomeCard(
+    title: String,
+    value: String,
+    description: String
+) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(value, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
+            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+        }
+    }
+}
+
+@Composable
 fun EconetConnectScreen(
     amplifyReady: Boolean,
     initializationError: String?
@@ -129,34 +166,11 @@ fun EconetConnectScreen(
                     Text("Serial: ${selected.factoryNumber}")
                     if (isLoading && installationDetails == null) CircularProgressIndicator()
                     installationDetails?.let { details ->
-                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                                Text("Installation status", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                Text(if (details.connected) "Connected" else "Not connected")
-                                if (details.hasAlarms) Text("Alarms present", color = MaterialTheme.colorScheme.error)
-                                Text("Software: ${details.softwareVersion}")
-                                Text("Hardware: ${details.hardwareVersion}")
-                                if (details.address.isNotBlank()) Text(details.address)
-                            }
-                        }
-                        Text("Components (${details.components.size})", style = MaterialTheme.typography.titleLarge)
-                        if (details.components.isEmpty()) Text("No components returned by the details endpoint.")
-                        details.components.forEach { component ->
-                            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text(component.name, fontWeight = FontWeight.SemiBold)
-                                    Text("Serial: ${component.serialNumber}")
-                                    Text("Software: ${component.softwareVersion} · Hardware: ${component.hardwareVersion}")
-                                    Text("Protocol: ${component.protocol}", style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
-                        }
-                        if (details.invalidComponents.isNotEmpty()) {
-                            Text("Components requiring attention", style = MaterialTheme.typography.titleMedium)
-                            details.invalidComponents.forEach { Text("• $it", color = MaterialTheme.colorScheme.error) }
-                        }
-                        HorizontalDivider()
-                        Text("Live telemetry and service controls are the next stage: authenticated AWS IoT connection and the official MQTT protocol.")
+                        CircuitHomeScreen(
+                            installationName = details.name,
+                            circuitLabel = "Circuit 2",
+                            connectionLabel = if (details.connected) "Installation connected" else "Installation offline"
+                        )
                     }
                 } else if (isSignedIn) {
                     Text("Cloud account", style = MaterialTheme.typography.titleLarge)
