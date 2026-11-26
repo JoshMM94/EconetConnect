@@ -129,7 +129,7 @@ fun EconetConnectScreen(
                     Text("Serial: ${selected.factoryNumber}")
                     if (isLoading && installationDetails == null) CircularProgressIndicator()
                     installationDetails?.let { details ->
-                        ElevatedCard(modifier = Modifier.fillMaxWidth().clickable(enabled = !isLoading) { openInstallation(installation) }) {
+                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                                 Text("Installation status", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                 Text(if (details.connected) "Connected" else "Not connected")
@@ -178,7 +178,7 @@ fun EconetConnectScreen(
                     }
 
                     installations.forEach { installation ->
-                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                        ElevatedCard(modifier = Modifier.fillMaxWidth().clickable(enabled = !isLoading) { openInstallation(installation) }) {
                             Column(
                                 modifier = Modifier.padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
