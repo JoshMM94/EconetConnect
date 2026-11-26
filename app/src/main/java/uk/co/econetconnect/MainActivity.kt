@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.webkit.CookieManager
+import android.webkit.ConsoleMessage
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -88,6 +89,7 @@ private fun EconetDashboardApp() {
     var pageStatus by remember { mutableStateOf("Sign in to the official portal to load live data") }
     var lastRead by remember { mutableStateOf("Waiting for portal data") }
     var pageError by remember { mutableStateOf("") }
+    var pageProgress by remember { mutableIntStateOf(0) }
 
     val webView = remember {
         WebView(context).apply {
@@ -96,20 +98,28 @@ private fun EconetDashboardApp() {
             settings.databaseEnabled = true
             settings.allowFileAccess = false
             settings.allowContentAccess = false
-            settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            setBackgroundColor(android.graphics.Color.WHITE)
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-            webChromeClient = WebChromeClient()
+            webChromeClient = object : WebChromeClient() {
+                override fun onProgressChanged(view: WebView, newProgress: Int) {
+                    pageProgress = newProgress
+                    if (newProgress < 100) pageStatus = "Loading Econet portal… " + newProgress + "%"
+                }
+                override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                    if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) pageError = "Portal script error: " + message.message().take(180)
+                    return true
+                }
+            }
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val uri = request.url
-                    val host = uri.host.orEmpty().lowercase(Locale.ROOT)
-                    val allowed = uri.scheme == "https" && (
-                        host == "cloud.grant.eu" || host.endsWith(".grant.eu") ||
-                        host == "econetcloud.eu" || host.endsWith(".econetcloud.eu") ||
-                        host.endsWith(".amazoncognito.com") || host.endsWith(".amazonaws.com")
-                    )
-                    if (allowed) return false
+                    if (uri.scheme.equals("https", ignoreCase = true)) return false
+                    if (uri.scheme.equals("http", ignoreCase = true)) {
+                        pageError = "Blocked an insecure HTTP redirect from the Econet portal."
+                        return true
+                    }
                     runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
                     return true
                 }
