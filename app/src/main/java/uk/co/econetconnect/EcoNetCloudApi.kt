@@ -28,13 +28,22 @@ data class EcoNetInstallation(
 
 data class EcoNetComponent(
     val name: String, val serialNumber: String, val softwareVersion: String,
-    val hardwareVersion: String, val protocol: String
+    val hardwareVersion: String, val protocol: String, val producerName: String = ""
 )
 data class EcoNetInstallationDetails(
     val name: String, val serialNumber: String, val address: String,
     val connected: Boolean, val hasAlarms: Boolean, val softwareVersion: String,
     val hardwareVersion: String, val components: List<EcoNetComponent>,
     val invalidComponents: List<String>
+)
+
+data class EcoNetControllerProfile(
+    val componentName: String,
+    val producerName: String,
+    val hardwareVersion: String,
+    val softwareVersion: String,
+    val profile: JSONObject,
+    val translations: JSONObject
 )
 
 object EcoNetCloudApi {
@@ -139,7 +148,11 @@ object EcoNetCloudApi {
                                         serialNumber = item.optString("componentFn").ifBlank { "—" },
                                         softwareVersion = item.optString("softVersion").ifBlank { "—" },
                                         hardwareVersion = item.optString("hardwareVersion").ifBlank { "—" },
-                                        protocol = item.optString("protocol").ifBlank { "—" }
+                                        protocol = item.optString("protocol").ifBlank { "—" },
+                                        producerName = item.optString("producerName").takeIf { it.isNotBlank() && it != "null" }
+                                            ?: item.optString("producer").takeIf { it.isNotBlank() && it != "null" }
+                                            ?: item.optString("componentType").takeIf { it.isNotBlank() && it != "null" }
+                                            ?: ""
                                     ))
                                 }
                             }
@@ -174,6 +187,90 @@ object EcoNetCloudApi {
             },
             { error -> onError(error.localizedMessage ?: "Could not retrieve AWS session.") }
         )
+    }
+
+
+    fun fetchControllerProfiles(
+        components: List<EcoNetComponent>,
+        onSuccess: (List<EcoNetControllerProfile>) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        Amplify.Auth.fetchAuthSession(
+            { authSession ->
+                try {
+                    val session = authSession as? AWSCognitoAuthSession
+                        ?: throw IllegalStateException("Cognito session was not available.")
+                    if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
+                    val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
+                        ?: throw IllegalStateException("AWS temporary credentials could not be obtained.")
+                    Thread {
+                        try {
+                            val profiles = components.mapNotNull { component ->
+                                val producer = component.producerName
+                                if (producer.isBlank() || component.hardwareVersion.isBlank() ||
+                                    component.softwareVersion.isBlank() || component.hardwareVersion == "—" ||
+                                    component.softwareVersion == "—") return@mapNotNull null
+                                val base = "/prod/v1/profiles/$APP_ID/" + java.net.URLEncoder.encode(producer, "UTF-8") +
+                                    "/" + java.net.URLEncoder.encode(component.hardwareVersion, "UTF-8") +
+                                    "/" + java.net.URLEncoder.encode(component.softwareVersion, "UTF-8") + "/web"
+                                val profile = signedGet("$base/profile.json", credentials)
+                                val translations = signedGet("$base/trans_en.json", credentials)
+                                EcoNetControllerProfile(component.name, producer, component.hardwareVersion,
+                                    component.softwareVersion, JSONObject(profile), JSONObject(translations))
+                            }
+                            if (profiles.isEmpty()) throw IllegalStateException(
+                                "The installation response did not provide controller profile identifiers for its components."
+                            )
+                            Handler(Looper.getMainLooper()).post { onSuccess(profiles) }
+                        } catch (error: Exception) {
+                            Handler(Looper.getMainLooper()).post {
+                                onError(error.message ?: "Could not load controller profiles.")
+                            }
+                        }
+                    }.start()
+                } catch (error: Exception) {
+                    onError(error.message ?: "Could not prepare controller profile request.")
+                }
+            },
+            { error -> onError(error.localizedMessage ?: "Could not retrieve AWS session.") }
+        )
+    }
+
+    private fun signedGet(path: String, credentials: AWSTemporaryCredentials): String {
+        val request = DefaultRequest<Any>("execute-api").apply {
+            setEndpoint(URI.create(API_ENDPOINT))
+            setResourcePath(path)
+            setHttpMethod(HttpMethodName.GET)
+            addHeader("appid", APP_ID)
+        }
+        val signer = AWS4Signer().apply {
+            setRegionName(AWS_REGION)
+            setServiceName("execute-api")
+        }
+        signer.sign(request, BasicSessionCredentials(
+            credentials.accessKeyId, credentials.secretAccessKey, credentials.sessionToken
+        ))
+        val connection = (URL("https://$API_HOST$path").openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 20000
+            readTimeout = 30000
+            setRequestProperty("Accept", "application/json")
+            request.headers.forEach { (name, value) ->
+                if (!name.equals("host", ignoreCase = true)) setRequestProperty(name, value)
+            }
+        }
+        try {
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) {
+                val detail = try { JSONObject(body).optString("message") } catch (_: Exception) { "" }
+                throw IllegalStateException(if (detail.isNotBlank()) "Profile request failed (HTTP $code): $detail" else "Profile request failed with HTTP $code.")
+            }
+            return body
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun requestInstallationList(credentials: AWSTemporaryCredentials): List<EcoNetInstallation> {
