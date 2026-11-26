@@ -17,6 +17,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.amplifyframework.core.Amplify
 import com.amplifyframework.auth.cognito.AWSCognitoAuthPlugin
+import com.amplifyframework.auth.options.AuthSignOutOptions
 
 class MainActivity : ComponentActivity() {
     private var amplifyReady = false
@@ -104,12 +105,13 @@ fun EconetConnectScreen(
                     Button(
                         onClick = {
                             Amplify.Auth.signOut(
-                                { 
+                                AuthSignOutOptions.builder().build(),
+                                {
                                     isSignedIn = false
                                     email = ""
                                     status = "Signed out"
                                 },
-                                { error -> showError(error.localizedMessage ?: "Sign out failed.") }
+                                { error -> showError(error.toString()) }
                             )
                         },
                         modifier = Modifier.fillMaxWidth()
