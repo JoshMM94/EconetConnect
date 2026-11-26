@@ -30,3 +30,7 @@ Do not guess these. Extract/verify them from the official APK and observed app b
 
 ## Build
 Push this folder to a GitHub repository. GitHub Actions builds a debug APK and publishes it as an Actions artifact.
+
+
+## Portal WebView diagnostics
+The portal is loaded only after the Android WebView is attached. The app uses a standard mobile browser user-agent and reports whether the document body contains readable text after page load.
