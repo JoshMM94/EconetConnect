@@ -16,6 +16,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import com.amplifyframework.core.Amplify
 import com.amplifyframework.auth.cognito.AWSCognitoAuthPlugin
 
@@ -100,6 +102,10 @@ fun EconetConnectScreen(
     var controllerProfiles by remember { mutableStateOf<List<EcoNetControllerProfile>>(emptyList()) }
     var profileStatus by remember { mutableStateOf("Controller profile not loaded") }
     var mqttStatus by remember { mutableStateOf("MQTT not connected") }
+    var parameterDump by remember { mutableStateOf("") }
+    var dumpStatus by remember { mutableStateOf("No parameter dump retrieved yet") }
+    var isDumping by remember { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
     var status by remember { mutableStateOf(initializationError ?: "Not connected") }
 
     fun showError(message: String) {
@@ -196,6 +202,37 @@ fun EconetConnectScreen(
                     Text("Serial: ${selected.factoryNumber}")
                     if (isLoading && installationDetails == null) CircularProgressIndicator()
                     installationDetails?.let { details ->
+                        Button(
+                            onClick = {
+                                isDumping = true
+                                dumpStatus = "Connecting and requesting raw parameter tables…"
+                                parameterDump = ""
+                                EcoNetCloudApi.fetchParameterTableDump(
+                                    selected.id, details.components,
+                                    onSuccess = { result ->
+                                        parameterDump = result
+                                        dumpStatus = "Parameter dump received. Copy it and paste it into this chat."
+                                        isDumping = false
+                                    },
+                                    onError = { message ->
+                                        dumpStatus = "Parameter dump failed: $message"
+                                        isDumping = false
+                                    }
+                                )
+                            },
+                            enabled = !isDumping,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(if (isDumping) "Retrieving parameter dump…" else "Retrieve parameter dump") }
+                        Text("Diagnostics · read-only", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(dumpStatus, style = MaterialTheme.typography.bodySmall)
+                        if (parameterDump.isNotBlank()) {
+                            Button(onClick = { clipboard.setText(AnnotatedString(parameterDump)) }) {
+                                Text("Copy full parameter dump")
+                            }
+                            Text("Descriptions will be matched from controller profiles where available; unmatched entries remain raw IDs and values.", style = MaterialTheme.typography.bodySmall)
+                            Text(parameterDump.take(1600) + if (parameterDump.length > 1600) "\n… preview truncated; copy the full dump above." else "",
+                                style = MaterialTheme.typography.bodySmall)
+                        }
                         CircuitHomeScreen(
                             installationName = details.name,
                             circuitLabel = "Circuit 2",

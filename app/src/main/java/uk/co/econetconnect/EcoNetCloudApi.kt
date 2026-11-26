@@ -342,6 +342,79 @@ object EcoNetCloudApi {
         )
     }
 
+
+    fun fetchParameterTableDump(
+        installationId: String,
+        components: List<EcoNetComponent>,
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        Amplify.Auth.fetchAuthSession({ authSession ->
+            try {
+                val session = authSession as? AWSCognitoAuthSession
+                    ?: throw IllegalStateException("Cognito session was not available.")
+                if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
+                val identityId = session.identityIdResult.value
+                    ?: throw IllegalStateException("Cognito Identity ID is unavailable.")
+                val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
+                    ?: throw IllegalStateException("AWS temporary credentials are unavailable.")
+                val groups = session.userPoolTokensResult.value?.idToken?.let { cognitoGroups(it) }.orEmpty()
+                val serviceRole = groups.contains("ServiceCompanyManagers")
+                val unsupported = groups.filterNot { it == "ServiceCompanyManagers" }
+                if (unsupported.isNotEmpty()) throw IllegalStateException("Unsupported ecoNET role groups: $unsupported")
+                Thread {
+                    var mqtt: EcoNetMqttClient? = null
+                    try {
+                        mqtt = EcoNetMqttClient(installationId, identityId, credentials, serviceRole)
+                        mqtt.connect()
+                        val ping = mqtt.request(JSONObject().put("name", "CLIENT_PING"))
+                        if (ping.optInt("statusCode", 0) != 0) throw IllegalStateException("CLIENT_PING was not acknowledged.")
+                        val output = JSONObject()
+                            .put("installationId", installationId)
+                            .put("retrievedAtUtc", java.time.Instant.now().toString())
+                            .put("operation", "PARAM_TABLE_DUMP")
+                            .put("components", JSONArray())
+                        val failures = JSONArray()
+                        var successCount = 0
+                        components.filter { it.serialNumber.isNotBlank() && it.serialNumber != "—" }.forEach { component ->
+                            try {
+                                val response = mqtt.request(JSONObject().put("name", "PARAM_TABLE_DUMP")
+                                    .put("targets", JSONArray().put(JSONObject()
+                                        .put("component", component.serialNumber).put("isRaw", 1))))
+                                val targets = response.optJSONArray("targets") ?: JSONArray()
+                                val target = targets.optJSONObject(0)
+                                if (target == null || target.optInt("statusCode", -1) != 0) {
+                                    failures.put(JSONObject().put("serialNumber", component.serialNumber)
+                                        .put("name", component.name).put("response", target ?: JSONObject()))
+                                } else {
+                                    output.getJSONArray("components").put(JSONObject()
+                                        .put("name", component.name).put("serialNumber", component.serialNumber)
+                                        .put("componentType", component.componentType)
+                                        .put("softwareVersion", component.softwareVersion)
+                                        .put("hardwareVersion", component.hardwareVersion)
+                                        .put("parameters", target.opt("parameters") ?: JSONObject()))
+                                    successCount++
+                                }
+                            } catch (e: Exception) {
+                                failures.put(JSONObject().put("serialNumber", component.serialNumber)
+                                    .put("name", component.name).put("error", e.message ?: e.javaClass.simpleName))
+                            }
+                        }
+                        output.put("failedComponents", failures)
+                        if (successCount == 0) throw IllegalStateException("No component returned a successful parameter dump. $failures")
+                        Handler(Looper.getMainLooper()).post { onSuccess(output.toString(2)) }
+                    } catch (e: Exception) {
+                        Handler(Looper.getMainLooper()).post { onError(e.message ?: "Parameter dump failed.") }
+                    } finally {
+                        try { mqtt?.disconnect() } catch (_: Exception) {}
+                    }
+                }.start()
+            } catch (e: Exception) {
+                onError(e.message ?: "Could not prepare parameter-table request.")
+            }
+        }, { error -> onError(error.localizedMessage ?: "Could not retrieve authenticated AWS session.") })
+    }
+
     private fun cognitoGroups(idToken: String): List<String> {
         return try {
             val payload = idToken.split(".").getOrNull(1) ?: return emptyList()
