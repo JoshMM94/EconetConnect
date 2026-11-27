@@ -413,11 +413,9 @@ object EcoNetCloudApi {
                     Thread {
                         var mqtt: EcoNetMqttClient? = null
                         try {
-                            val output = JSONObject()
-                                .put("installationId", installationId)
+                            val output = JSONObject().put("installationId", installationId)
                                 .put("retrievedAtUtc", java.time.Instant.now().toString())
-                                .put("method", "GET_VALUES")
-                                .put("components", JSONArray())
+                                .put("method", "GET_VALUES").put("components", JSONArray())
                             val failures = JSONArray()
                             mqtt = EcoNetMqttClient(installationId, identityId, credentials, false)
                             mqtt.connect()
@@ -426,45 +424,73 @@ object EcoNetCloudApi {
                                 if (component == null || component.serialNumber.isBlank() || component.serialNumber == "—") {
                                     failures.put(JSONObject().put("component", profile.componentName).put("error", "No componentFn identifier"))
                                 } else {
-                                    val keys = linkedSetOf<String>()
-                                    fun visit(value: Any?) {
-                                        when (value) {
+                                    val labels = linkedMapOf<String, JSONObject>()
+                                    fun visit(node: Any?, parentTitle: String? = null) {
+                                        when (node) {
                                             is JSONObject -> {
-                                                val p1 = value.optString("parameterName")
-                                                val p2 = value.optString("parameter")
-                                                if (p1.isNotBlank() && p1 != "null") keys.add(p1)
-                                                if (p2.isNotBlank() && p2 != "null") keys.add(p2)
-                                                val it = value.keys()
-                                                while (it.hasNext()) visit(value.opt(it.next()))
+                                                val title = node.optString("title").takeIf { it.isNotBlank() && it != "null" } ?: parentTitle
+                                                val unit = node.optString("unit").takeIf { it.isNotBlank() && it != "null" }
+                                                listOf(node.optString("parameterName"), node.optString("parameter")).filter { it.isNotBlank() && it != "null" }.forEach { key ->
+                                                    labels[key] = JSONObject().put("label", title ?: key).put("unit", unit ?: "")
+                                                }
+                                                val it = node.keys(); while (it.hasNext()) visit(node.opt(it.next()), title)
                                             }
-                                            is JSONArray -> for (i in 0 until value.length()) visit(value.opt(i))
+                                            is JSONArray -> for (i in 0 until node.length()) visit(node.opt(i), parentTitle)
                                         }
                                     }
                                     visit(profile.profile)
+                                    val translations = profile.translations
+                                    labels.forEach { (key, meta) ->
+                                        val title = meta.optString("label")
+                                        val translated = translations.optString(title).takeIf { it.isNotBlank() && it != "null" }
+                                            ?: translations.optString(title.removePrefix("@")).takeIf { it.isNotBlank() && it != "null" }
+                                            ?: translations.optString(key).takeIf { it.isNotBlank() && it != "null" }
+                                        if (translated != null) meta.put("label", translated)
+                                    }
+                                    val keys = labels.keys.toList()
                                     if (keys.isEmpty()) {
-                                        failures.put(JSONObject().put("component", profile.componentName).put("error", "Profile contained no parameterName/parameter keys"))
+                                        failures.put(JSONObject().put("component", component.name).put("error", "Profile contained no parameter keys"))
                                     } else {
-                                        val values = JSONArray()
-                                        keys.toList().chunked(100).forEachIndexed { index, chunk ->
-                                            val target = JSONObject().put("component", component.serialNumber)
-                                                .put("parameters", JSONArray(chunk))
-                                            val response = mqtt!!.requestEnvelope(JSONObject().put("name", "GET_VALUES")
-                                                .put("targets", JSONArray().put(target)))
-                                            values.put(JSONObject().put("chunk", index + 1).put("requestedKeys", chunk.size).put("response", response))
+                                        val valueRows = JSONArray()
+                                        keys.chunked(100).forEachIndexed { index, chunk ->
+                                            val target = JSONObject().put("component", component.serialNumber).put("parameters", JSONArray(chunk))
+                                            val response = mqtt!!.requestEnvelope(JSONObject().put("name", "GET_VALUES").put("targets", JSONArray().put(target)))
+                                            fun extract(node: Any?) {
+                                                when (node) {
+                                                    is JSONObject -> {
+                                                        val it = node.keys(); while (it.hasNext()) {
+                                                            val key = it.next(); val raw = node.opt(key)
+                                                            if (labels.containsKey(key)) {
+                                                                val value = when (raw) {
+                                                                    is JSONObject -> raw.opt("value") ?: raw.opt("0") ?: raw.opt("1")
+                                                                    is JSONArray -> if (raw.length() > 0) raw.opt(0) else JSONObject.NULL
+                                                                    else -> raw
+                                                                }
+                                                                if (value != null && value != JSONObject.NULL && value !is JSONObject && value !is JSONArray) {
+                                                                    val meta = labels.getValue(key)
+                                                                    valueRows.put(JSONObject().put("key", key).put("label", meta.optString("label", key))
+                                                                        .put("unit", meta.optString("unit")).put("value", value))
+                                                                } else extract(raw)
+                                                            } else extract(raw)
+                                                        }
+                                                    }
+                                                    is JSONArray -> for (i in 0 until node.length()) extract(node.opt(i))
+                                                }
+                                            }
+                                            extract(response)
+                                            valueRows.put(JSONObject().put("_request", "Batch ${index + 1}: ${chunk.size} keys").put("response", response))
                                         }
-                                        output.getJSONArray("components").put(JSONObject()
-                                            .put("name", component.name).put("componentFn", component.serialNumber)
-                                            .put("componentType", component.componentType)
-                                            .put("profileParameterCount", keys.size).put("valueResponses", values))
+                                        output.getJSONArray("components").put(JSONObject().put("name", component.name)
+                                            .put("componentFn", component.serialNumber).put("componentType", component.componentType)
+                                            .put("profileParameterCount", keys.size).put("values", valueRows))
                                     }
                                 }
                             }
                             output.put("failedComponents", failures)
-                            if (output.getJSONArray("components").length() == 0) throw IllegalStateException("No component parameter values could be requested. $failures")
+                            if (output.getJSONArray("components").length() == 0) throw IllegalStateException("No component values could be requested. $failures")
                             Handler(Looper.getMainLooper()).post { onSuccess(output.toString(2)) }
-                        } catch (e: Exception) {
-                            Handler(Looper.getMainLooper()).post { onError(e.message ?: "Could not retrieve ecoNET values.") }
-                        } finally { try { mqtt?.disconnect() } catch (_: Exception) {} }
+                        } catch (e: Exception) { Handler(Looper.getMainLooper()).post { onError(e.message ?: "Could not retrieve ecoNET values.") } }
+                        finally { try { mqtt?.disconnect() } catch (_: Exception) {} }
                     }.start()
                 } catch (e: Exception) { onError(e.message ?: "Could not prepare value request.") }
             }, { error -> onError(error.localizedMessage ?: "Could not retrieve AWS session.") })
