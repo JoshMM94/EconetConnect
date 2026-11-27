@@ -295,12 +295,22 @@ fun EconetConnectScreen(
                             }
                             EcoNetCloudStyleValues(parameterDump)
                         }
-                        CircuitHomeScreen(
-                            installationName = details.name,
-                            circuitLabel = "Circuit 2",
-                            connectionLabel = if (details.connected) "Installation connected" else "Installation offline",
-                            profileLabel = "$profileStatus\\n$mqttStatus"
-                        )
+                        Text("Installation components", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        Text(if (details.connected) "Installation connected" else "Installation offline",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                        details.components.forEach { component ->
+                            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Text(component.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                    Text(component.componentType, style = MaterialTheme.typography.bodyMedium)
+                                    Text("Serial: ${component.serialNumber}", style = MaterialTheme.typography.bodySmall)
+                                    Text("Firmware: ${component.softwareVersion} · Hardware: ${component.hardwareVersion}",
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                                }
+                            }
+                        }
+                        Text(profileStatus, style = MaterialTheme.typography.bodySmall)
+                        Text(mqttStatus, style = MaterialTheme.typography.bodySmall)
                     }
                 } else if (isSignedIn) {
                     Text("Cloud account", style = MaterialTheme.typography.titleLarge)
