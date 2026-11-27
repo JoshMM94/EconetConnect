@@ -606,10 +606,9 @@ object EcoNetCloudApi {
                     ?: throw IllegalStateException("Cognito ID token unavailable.")
                 val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                     ?: throw IllegalStateException("AWS temporary credentials are unavailable.")
-                // Match the reference client's DEFAULT identity path.
-                // Official ecoNET principal: serviceId for service roles, otherwise userId.
-                // Cognito Identity Pool UUID is only the AWS credential identity, not the MQTT principal.
-                val mqttPrincipal = resolveMqttPrincipal(idToken)
+                val identityId = session.identityIdResult.value
+                    ?: throw IllegalStateException("Cognito Identity Pool identity ID is unavailable.")
+                val mqttPrincipal = resolveMqttPrincipal(idToken, identityId, serviceId)
                 val mqttClientId = mqttPrincipal.first
                 val serviceRole = mqttPrincipal.second
                 Thread {
