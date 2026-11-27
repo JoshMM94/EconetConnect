@@ -169,15 +169,13 @@ class EcoNetMqttClient(
     }
 
     @Synchronized
-    fun request(operation: JSONObject, timeoutMs: Long = REQUEST_TIMEOUT_MS): JSONObject {
+    fun requestEnvelope(operation: JSONObject, timeoutMs: Long = REQUEST_TIMEOUT_MS): JSONObject {
         check(connected) { "MQTT is not connected." }
         val id = transaction.incrementAndGet().toString()
         val envelope = JSONObject().put("transactionId", id)
             .put("operations", org.json.JSONArray().put(operation))
         lastResponse = null
         val payload = envelope.toString().toByteArray(StandardCharsets.UTF_8)
-        // Match the reference client's QoS 1 publishing (Paho default).
-        // QoS 1 includes a packet identifier and requires a PUBACK.
         val publishId = nextPacketId()
         pubAckId = null
         val body = PacketWriter().mqttString(requestTopic).short(publishId).bytes(payload).result()
@@ -194,18 +192,19 @@ class EcoNetMqttClient(
         socketFailure?.let { throw IllegalStateException("MQTT connection lost: $it") }
         val response = lastResponse ?: throw IllegalStateException("No matching MQTT response was received.")
         if (response.optString("transactionId") != id) throw IllegalStateException("Received an unrelated MQTT response.")
-        val operations = response.optJSONArray("operations")
-            ?: throw IllegalStateException("MQTT response did not contain operations.")
-        if (operations.length() == 0) throw IllegalStateException("MQTT response contained no operation result.")
-        val first = operations.opt(0)
-        if (first is JSONObject) return first
-        if (first is String) {
-            throw IllegalStateException("ecoNET MQTT operation returned a string error instead of an object: " + first)
-        }
-        throw IllegalStateException("ecoNET MQTT operation result had unexpected type: " +
-            (first?.javaClass?.simpleName ?: "null") + "; raw response: " + response.toString())
+        return response
     }
 
+    @Synchronized
+    fun request(operation: JSONObject, timeoutMs: Long = REQUEST_TIMEOUT_MS): JSONObject {
+        val response = requestEnvelope(operation, timeoutMs)
+        val operations = response.optJSONArray("operations") ?: return response
+        if (operations.length() == 0) return response
+        val first = operations.opt(0)
+        if (first is JSONObject) return first
+        if (first is String) throw IllegalStateException("ecoNET MQTT operation returned a string error: $first")
+        throw IllegalStateException("Unexpected MQTT operation result: ${first?.javaClass?.simpleName ?: "null"}; raw response: $response")
+    }
     @Synchronized
     fun disconnect() {
         connected = false
