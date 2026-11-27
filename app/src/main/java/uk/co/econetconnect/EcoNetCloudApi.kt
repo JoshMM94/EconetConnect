@@ -353,6 +353,7 @@ object EcoNetCloudApi {
                 if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
                 val idToken = session.userPoolTokensResult.value?.idToken
                     ?: throw IllegalStateException("Cognito ID token unavailable.")
+                val groups = cognitoGroups(idToken)
                 val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                     ?: throw IllegalStateException("AWS temporary credentials unavailable.")
                 // Match the reference client's DEFAULT identity path.
@@ -368,7 +369,7 @@ object EcoNetCloudApi {
                         report.appendLine("- ${c.name}: serial=${c.serialNumber}, type=${c.componentType}, typeId=${c.componentTypeId}, producerCode=${c.producerCode}, hardware=${c.hardwareVersion}, software=${c.softwareVersion}, protocol=${c.protocol}")
                     }
                     report.appendLine("Cognito Identity Pool identity ID present: ${session.identityIdResult.value?.isNotBlank() == true}")
-                    report.appendLine("MQTT identity selected: DEFAULT Cognito Identity Pool identity ID (official userId path)")
+                    report.appendLine("MQTT identity selected: Cognito Identity Pool identity ID (reference client convention)")
                     report.appendLine("Cognito groups: ${if (groups.isEmpty()) "(none in token)" else groups.joinToString()}")
                     report.appendLine("Credentials: temporary session credentials available (secret values deliberately excluded)")
                     try {
