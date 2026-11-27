@@ -223,7 +223,6 @@ fun EconetConnectScreen(
                     val cognitoSession = authSession as? AWSCognitoAuthSession
                     if (cognitoSession?.isSignedIn == true) {
                         isSignedIn = true
-                        email = runCatching { Amplify.Auth.getCurrentUser().username }.getOrDefault("")
                         status = "Existing session restored. Retrieving your installations…"
                         loadInstallations()
                     } else {
