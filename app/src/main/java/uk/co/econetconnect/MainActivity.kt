@@ -91,29 +91,92 @@ private fun ParameterHomeCard(
 private fun EcoNetCloudStyleValues(report: String) {
     val root = remember(report) { runCatching { JSONObject(report) }.getOrNull() }
     val components = root?.optJSONArray("components")
-    if (components == null) { Text("No decoded values available yet."); return }
+    if (components == null) {
+        Text("No decoded readings were returned by the controller.")
+        return
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("Live installation data", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("LIVE READINGS", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            Text(
+                root.optString("retrievedAtUtc").take(19).replace("T", " "),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.secondary
+            )
+        }
+
         for (i in 0 until components.length()) {
             val component = components.optJSONObject(i) ?: continue
-            Text(component.optString("name", "Device"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            val values = component.optJSONArray("values") ?: continue
-            var shown = 0
-            for (j in 0 until values.length()) {
-                val item = values.optJSONObject(j) ?: continue
-                if (item.has("_request")) continue
-                val label = item.optString("label").ifBlank { item.optString("key") }
-                val value = item.opt("value")?.toString() ?: "—"
-                val unit = item.optString("unit")
-                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
-                        Text(value + if (unit.isNotBlank()) " $unit" else "", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
+            val values = component.optJSONArray("values") ?: JSONArray()
+            val readings = buildList {
+                for (j in 0 until values.length()) {
+                    val item = values.optJSONObject(j) ?: continue
+                    if (item.has("_request")) continue
+                    val label = item.optString("label").ifBlank { item.optString("key") }
+                    val rawValue = item.opt("value")
+                    val value = if (rawValue == null || rawValue == JSONObject.NULL) "—" else rawValue.toString()
+                    val unit = item.optString("unit").takeIf { it.isNotBlank() && it != "null" }
+                    add(label to (value + if (unit != null) " $unit" else ""))
+                }
+            }
+
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        component.optString("name", "Device"),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (readings.isEmpty()) {
+                        Text(
+                            "The controller returned no displayable values for this device.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                    } else {
+                        readings.chunked(2).forEach { pair ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                pair.forEach { (label, value) ->
+                                    Surface(
+                                        modifier = Modifier.weight(1f),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = MaterialTheme.shapes.medium
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(11.dp),
+                                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                                        ) {
+                                            Text(
+                                                label,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(
+                                                value,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                }
+                                if (pair.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
                     }
                 }
-                shown++
             }
-            if (shown == 0) Text("No values returned for this device yet.", color = MaterialTheme.colorScheme.secondary)
         }
     }
 }
@@ -276,7 +339,7 @@ fun EconetConnectScreen(
                         }
                         TextButton(onClick = { openInstallation(selected) }, enabled = !isLoading) { Text("Refresh") }
                     }
-                    Text("DHW", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Text("LIVE MONITORING", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Text(installationDetails?.name ?: selected.name, style = MaterialTheme.typography.bodyMedium)
                     if (isLoading && installationDetails == null) CircularProgressIndicator()
                     installationDetails?.let { details ->
