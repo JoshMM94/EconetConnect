@@ -57,7 +57,7 @@ class EcoNetMqttClient(
         check(!connected) { "MQTT client is already connected." }
         val opened = CountDownLatch(1)
         val request = Request.Builder().url(presignedWebSocketUrl(credentials))
-            .header("Origin", "https://cloud.grant.eu")
+            .header("Origin", "https://econetcloud.eu")
             .header("Sec-WebSocket-Protocol", "mqttv3.1").build()
         socket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -141,7 +141,7 @@ class EcoNetMqttClient(
         var outcome = "No WebSocket response received."
         val probe = OkHttpClient.Builder().callTimeout(27, TimeUnit.SECONDS).build()
         val builder = Request.Builder().url(uri).header("Sec-WebSocket-Protocol", "mqttv3.1")
-        if (sendOrigin) builder.header("Origin", "https://cloud.grant.eu")
+        if (sendOrigin) builder.header("Origin", "https://econetcloud.eu")
         probe.newWebSocket(builder.build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 val headers = listOf("Date", "Server", "x-amzn-RequestId", "x-amzn-ErrorType",
@@ -295,25 +295,37 @@ class EcoNetMqttClient(
     }
 
     private fun presignedWebSocketUrl(creds: AWSTemporaryCredentials): String {
-        // Match the successful Build #52 SigV4 flow: presign with access key + secret,
-        // then append the temporary session token as a query parameter.
-        val request = DefaultRequest<Any>(SERVICE).apply {
-            setEndpoint(URI.create("https://$ENDPOINT"))
-            setResourcePath("/mqtt")
-            setHttpMethod(HttpMethodName.GET)
-        }
-        val signer = AWS4Signer().apply { setRegionName(REGION); setServiceName(SERVICE) }
-        signer.presignRequest(
-            request,
-            BasicAWSCredentials(creds.accessKeyId, creds.secretAccessKey),
-            Date(System.currentTimeMillis() + 900_000L)
+        // Port of econet-api-client/src/iot/sigv4.ts. Its IoT URL intentionally
+        // omits X-Amz-Expires and appends the temporary session token unsigned.
+        val now = java.time.Instant.now().atZone(java.time.ZoneOffset.UTC)
+        val datetime = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").format(now)
+        val date = datetime.substring(0, 8)
+        val scope = "$date/$REGION/$SERVICE/aws4_request"
+        val params = sortedMapOf(
+            "X-Amz-Algorithm" to "AWS4-HMAC-SHA256",
+            "X-Amz-Credential" to "${creds.accessKeyId}/$scope",
+            "X-Amz-Date" to datetime,
+            "X-Amz-SignedHeaders" to "host"
         )
-        val query = request.parameters.entries.joinToString("&") {
-            "${encode(it.key)}=${encode(it.value)}"
-        }
-        return "wss://$ENDPOINT/mqtt?$query&X-Amz-Security-Token=${encode(creds.sessionToken)}"
+        val canonicalQuery = params.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
+        val canonicalRequest = "GET\n/mqtt\n$canonicalQuery\nhost:$ENDPOINT\n\nhost\n${sha256Hex(ByteArray(0))}"
+        val stringToSign = "AWS4-HMAC-SHA256\n$datetime\n$scope\n${sha256Hex(canonicalRequest.toByteArray(StandardCharsets.UTF_8))}"
+        val kDate = hmacSha256(("AWS4" + creds.secretAccessKey).toByteArray(StandardCharsets.UTF_8), date)
+        val kRegion = hmacSha256(kDate, REGION)
+        val kService = hmacSha256(kRegion, SERVICE)
+        val kSigning = hmacSha256(kService, "aws4_request")
+        val signature = hmacSha256(kSigning, stringToSign).joinToString("") { "%02x".format(it) }
+        return "wss://$ENDPOINT/mqtt?$canonicalQuery&X-Amz-Signature=$signature&X-Amz-Security-Token=${encode(creds.sessionToken)}"
     }
 
+    private fun hmacSha256(key: ByteArray, value: String): ByteArray {
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        mac.init(javax.crypto.spec.SecretKeySpec(key, "HmacSHA256"))
+        return mac.doFinal(value.toByteArray(StandardCharsets.UTF_8))
+    }
+
+    private fun sha256Hex(value: ByteArray): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(value).joinToString("") { "%02x".format(it) }
     private fun encode(value: String): String =
         URLEncoder.encode(value, "UTF-8").replace("+", "%20").replace("%7E", "~")
 
