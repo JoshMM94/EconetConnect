@@ -130,6 +130,7 @@ fun EconetConnectScreen(
     var installations by remember { mutableStateOf<List<EcoNetInstallation>>(emptyList()) }
     var installationsLoaded by remember { mutableStateOf(false) }
     var selectedInstallation by remember { mutableStateOf<EcoNetInstallation?>(null) }
+    var selectedComponent by remember { mutableStateOf<EcoNetComponent?>(null) }
     var installationDetails by remember { mutableStateOf<EcoNetInstallationDetails?>(null) }
     var controllerProfiles by remember { mutableStateOf<List<EcoNetControllerProfile>>(emptyList()) }
     var profileStatus by remember { mutableStateOf("Controller profile not loaded") }
@@ -150,6 +151,7 @@ fun EconetConnectScreen(
 
     fun openInstallation(installation: EcoNetInstallation) {
         selectedInstallation = installation
+        selectedComponent = null
         installationDetails = null
         controllerProfiles = emptyList()
         profileStatus = "Loading controller profile…"
@@ -228,7 +230,7 @@ fun EconetConnectScreen(
                 if (selectedInstallation != null) {
                     val selected = selectedInstallation!!
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        TextButton(onClick = { selectedInstallation = null; installationDetails = null; status = "Installation list" }) {
+                        TextButton(onClick = { selectedInstallation = null; selectedComponent = null; installationDetails = null; status = "Installation list" }) {
                             Text("← Installations")
                         }
                         TextButton(onClick = { openInstallation(selected) }, enabled = !isLoading) { Text("Refresh") }
@@ -295,11 +297,49 @@ fun EconetConnectScreen(
                             }
                             EcoNetCloudStyleValues(parameterDump)
                         }
+                        selectedComponent?.let { component ->
+                            HorizontalDivider()
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Device details", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                                TextButton(onClick = { selectedComponent = null }) { Text("Close") }
+                            }
+                            Text(component.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text(component.componentType.ifBlank { component.name })
+                            Text("Serial: ${component.serialNumber}")
+                            Text("Firmware: ${component.softwareVersion} · Hardware: ${component.hardwareVersion}")
+                            val matchingProfile = controllerProfiles.firstOrNull { it.componentName == component.name }
+                            Text(
+                                if (matchingProfile != null) "Controller profile loaded" else profileStatus,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                            Button(
+                                onClick = {
+                                    isDumping = true
+                                    dumpStatus = "Requesting values for ${component.name}…"
+                                    parameterDump = ""
+                                    EcoNetCloudApi.fetchAvailableValues(
+                                        selected.id, listOf(component),
+                                        onSuccess = { result ->
+                                            parameterDump = result
+                                            dumpStatus = "Values retrieved for ${component.name}."
+                                            isDumping = false
+                                        },
+                                        onError = { message ->
+                                            dumpStatus = "Value retrieval failed: $message"
+                                            isDumping = false
+                                        }
+                                    )
+                                },
+                                enabled = !isDumping,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text(if (isDumping) "Retrieving device values…" else "Retrieve this device's values") }
+                        }
                         Text("Installation components", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                         Text(if (details.connected) "Installation connected" else "Installation offline",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                         details.components.forEach { component ->
-                            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                            ElevatedCard(modifier = Modifier.fillMaxWidth().clickable { selectedComponent = component }) {
                                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                     Text(component.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                                     Text(component.componentType, style = MaterialTheme.typography.bodyMedium)
