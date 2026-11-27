@@ -389,6 +389,87 @@ object EcoNetCloudApi {
         }, { e -> onError(e.localizedMessage ?: "Could not retrieve authenticated AWS session.") })
     }
 
+    /**
+     * Read-only discovery: load profile-defined parameter keys, then ask the
+     * installation for values using the reference client's GET_VALUES operation.
+     * No circuit numbering or fixed parameter IDs are assumed.
+     */
+    fun fetchAvailableValues(
+        installationId: String,
+        components: List<EcoNetComponent>,
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        fetchControllerProfiles(components, { profiles ->
+            Amplify.Auth.fetchAuthSession({ authSession ->
+                try {
+                    val session = authSession as? AWSCognitoAuthSession
+                        ?: throw IllegalStateException("Cognito session was not available.")
+                    if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
+                    val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
+                        ?: throw IllegalStateException("AWS temporary credentials are unavailable.")
+                    val identityId = session.identityIdResult.value
+                        ?: throw IllegalStateException("Cognito Identity Pool identity ID is unavailable.")
+                    Thread {
+                        var mqtt: EcoNetMqttClient? = null
+                        try {
+                            val output = JSONObject()
+                                .put("installationId", installationId)
+                                .put("retrievedAtUtc", java.time.Instant.now().toString())
+                                .put("method", "GET_VALUES")
+                                .put("components", JSONArray())
+                            val failures = JSONArray()
+                            mqtt = EcoNetMqttClient(installationId, identityId, credentials, false)
+                            mqtt.connect()
+                            profiles.forEach { profile ->
+                                val component = components.firstOrNull { it.name == profile.componentName }
+                                if (component == null || component.serialNumber.isBlank() || component.serialNumber == "—") {
+                                    failures.put(JSONObject().put("component", profile.componentName).put("error", "No componentFn identifier"))
+                                } else {
+                                    val keys = linkedSetOf<String>()
+                                    fun visit(value: Any?) {
+                                        when (value) {
+                                            is JSONObject -> {
+                                                val p1 = value.optString("parameterName")
+                                                val p2 = value.optString("parameter")
+                                                if (p1.isNotBlank() && p1 != "null") keys.add(p1)
+                                                if (p2.isNotBlank() && p2 != "null") keys.add(p2)
+                                                val it = value.keys()
+                                                while (it.hasNext()) visit(value.opt(it.next()))
+                                            }
+                                            is JSONArray -> for (i in 0 until value.length()) visit(value.opt(i))
+                                        }
+                                    }
+                                    visit(profile.profile)
+                                    if (keys.isEmpty()) {
+                                        failures.put(JSONObject().put("component", profile.componentName).put("error", "Profile contained no parameterName/parameter keys"))
+                                    } else {
+                                        val values = JSONArray()
+                                        keys.toList().chunked(100).forEachIndexed { index, chunk ->
+                                            val target = JSONObject().put("component", component.serialNumber)
+                                                .put("parameters", JSONArray(chunk))
+                                            val response = mqtt!!.requestEnvelope(JSONObject().put("name", "GET_VALUES")
+                                                .put("targets", JSONArray().put(target)))
+                                            values.put(JSONObject().put("chunk", index + 1).put("requestedKeys", chunk.size).put("response", response))
+                                        }
+                                        output.getJSONArray("components").put(JSONObject()
+                                            .put("name", component.name).put("componentFn", component.serialNumber)
+                                            .put("componentType", component.componentType)
+                                            .put("profileParameterCount", keys.size).put("valueResponses", values))
+                                    }
+                                }
+                            }
+                            output.put("failedComponents", failures)
+                            if (output.getJSONArray("components").length() == 0) throw IllegalStateException("No component parameter values could be requested. $failures")
+                            Handler(Looper.getMainLooper()).post { onSuccess(output.toString(2)) }
+                        } catch (e: Exception) {
+                            Handler(Looper.getMainLooper()).post { onError(e.message ?: "Could not retrieve ecoNET values.") }
+                        } finally { try { mqtt?.disconnect() } catch (_: Exception) {} }
+                    }.start()
+                } catch (e: Exception) { onError(e.message ?: "Could not prepare value request.") }
+            }, { error -> onError(error.localizedMessage ?: "Could not retrieve AWS session.") })
+        }, { error -> onError("Could not load controller profiles: $error") })
+    }
     fun fetchParameterTableDump(
         installationId: String,
         components: List<EcoNetComponent>,
