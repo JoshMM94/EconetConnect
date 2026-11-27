@@ -67,7 +67,7 @@ private fun parseDashboard(source: String): DashboardValues {
         find("Heat pump status", "Operating status", "Device status", "On/Off", "Running state", "Status"),
         find("Heating flow temperature", "Flow temperature", "Flow temp", "Leaving water temperature", "LWT", "Outlet water temperature"),
         find("Heating return temperature", "Return temperature", "Return temp", "Entering water temperature", "RWT", "Inlet water temperature"),
-        find("Water flow rate", "Flow rate", "Water flow", "Flow"),
+        find("Water flow rate", "Flow rate", "Water flow"),
         find("Compressor frequency", "Compressor freq", "Compressor Hz", "Compressor speed"),
         find("Fan RPM", "Fan speed", "Fan rotation speed"),
         find("Flow set temperature", "Flow target", "Water setpoint", "Heating set temperature", "Set temperature"),
@@ -77,7 +77,7 @@ private fun parseDashboard(source: String): DashboardValues {
         find("Room setpoint", "Requested room temperature", "Target room temp"),
         find("Hysteresis", "Room hysteresis", "Temperature hysteresis"),
         find("DHW actual temperature", "Current DHW temperature", "DHW temperature", "DHW temp", "Hot water current temperature", "Hot water temperature", "Domestic hot water actual temperature", "Domestic hot water temperature", "Tank temperature", "Tank water temperature"),
-        find("DHW target temperature", "DHW set temperature", "DHW set temp", "Hot water target temperature", "Hot water set temperature", "Hot water target", "Domestic hot water setpoint", "Domestic hot water set temperature", "Tank set temperature")
+        find("DHW target temperature", "DHW target", "DHW setpoint", "DHW set temperature", "DHW set temp", "Hot water target temperature", "Hot water set temperature", "Hot water target", "Domestic hot water setpoint", "Domestic hot water set temperature", "Tank set temperature")
     )
 }
 
