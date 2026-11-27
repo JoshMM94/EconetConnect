@@ -233,28 +233,22 @@ fun EconetConnectScreen(
                 status = "Installation details retrieved. Loading controller profiles and live readings…"
                 mqttStatus = "Live-value request will establish its own read-only MQTT session."
                 profileStatus = "Loading profiles for discovered components…"
-                EcoNetCloudApi.fetchControllerProfiles(
-                    details.components,
-                    onSuccess = { profiles ->
-                        controllerProfiles = profiles
-                        profileStatus = "Loaded ${profiles.size} controller profile(s)"
-                        EcoNetCloudApi.fetchAvailableValues(
-                            installationId = installation.id,
-                            serviceId = details.serviceId,
-                            components = details.components,
-                            onSuccess = { report ->
-                                liveValues = report
-                                liveValuesStatus = "Live values received from controller"
-                                isLoading = false
-                            },
-                            onError = { message ->
-                                liveValuesStatus = "Live value request failed: $message"
-                                isLoading = false
-                            }
-                        )
+                // fetchAvailableValues loads controller profiles internally before GET_VALUES.
+                // Avoid downloading every profile twice on each installation refresh.
+                profileStatus = "Loading controller profiles and requesting live values…"
+                EcoNetCloudApi.fetchAvailableValues(
+                    installationId = installation.id,
+                    serviceId = details.serviceId,
+                    components = details.components,
+                    onSuccess = { report ->
+                        liveValues = report
+                        liveValuesStatus = "Live values received from controller"
+                        profileStatus = "Controller profiles loaded"
+                        isLoading = false
                     },
                     onError = { message ->
-                        profileStatus = message
+                        liveValuesStatus = "Live value request failed: $message"
+                        profileStatus = "Profile/value retrieval failed"
                         isLoading = false
                     }
                 )
