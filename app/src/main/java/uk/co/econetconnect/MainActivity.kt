@@ -1,6 +1,8 @@
 package uk.co.econetconnect
 
 import android.annotation.SuppressLint
+import android.app.Dialog
+import android.view.ViewGroup
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
@@ -104,13 +106,52 @@ private fun EconetDashboardApp() {
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             webChromeClient = object : WebChromeClient() {
+                private val popupDialogs = mutableMapOf<WebView, Dialog>()
                 override fun onProgressChanged(view: WebView, newProgress: Int) {
                     pageProgress = newProgress
                     if (newProgress < 100) pageStatus = "Loading Econet portal… " + newProgress + "%"
                 }
                 override fun onConsoleMessage(message: ConsoleMessage): Boolean {
-                    if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) pageError = "Portal script error: " + message.message().take(180)
+                    if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                        pageError = "Portal JavaScript error: " + message.message().take(260) +
+                            " · " + (message.sourceId() ?: "") + ":" + message.lineNumber()
+                    }
                     return true
+                }
+                override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message): Boolean {
+                    val popup = WebView(context)
+                    popup.settings.javaScriptEnabled = true
+                    popup.settings.domStorageEnabled = true
+                    popup.settings.databaseEnabled = true
+                    popup.settings.javaScriptCanOpenWindowsAutomatically = true
+                    popup.settings.setSupportMultipleWindows(true)
+                    CookieManager.getInstance().setAcceptCookie(true)
+                    CookieManager.getInstance().setAcceptThirdPartyCookies(popup, true)
+                    val dialog = Dialog(context)
+                    popupDialogs[popup] = dialog
+                    popup.webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(child: WebView, request: WebResourceRequest): Boolean {
+                            val uri = request.url
+                            return if (uri.scheme.equals("https", true)) false else true
+                        }
+                    }
+                    popup.webChromeClient = this
+                    dialog.setContentView(popup)
+                    dialog.setOnDismissListener {
+                        popupDialogs.remove(popup)
+                        popup.stopLoading()
+                        popup.destroy()
+                    }
+                    dialog.show()
+                    dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                    val transport = resultMsg.obj as WebView.WebViewTransport
+                    transport.webView = popup
+                    resultMsg.sendToTarget()
+                    pageStatus = "Econet opened a secure sign-in window"
+                    return true
+                }
+                override fun onCloseWindow(window: WebView) {
+                    popupDialogs.remove(window)?.dismiss()
                 }
             }
             webViewClient = object : WebViewClient() {
