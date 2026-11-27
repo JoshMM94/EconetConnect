@@ -57,7 +57,7 @@ class EcoNetMqttClient(
         check(!connected) { "MQTT client is already connected." }
         val opened = CountDownLatch(1)
         val request = Request.Builder().url(presignedWebSocketUrl(credentials))
-            .header("Origin", "https://econetcloud.eu")
+            .header("Origin", "https://cloud.grant.eu")
             .header("Sec-WebSocket-Protocol", "mqttv3.1").build()
         socket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
