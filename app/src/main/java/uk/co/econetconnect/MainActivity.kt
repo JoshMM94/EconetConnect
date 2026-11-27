@@ -138,6 +138,8 @@ fun EconetConnectScreen(
     var profileStatus by remember { mutableStateOf("Controller profile not loaded") }
     var mqttStatus by remember { mutableStateOf("MQTT not connected") }
     var parameterDump by remember { mutableStateOf("") }
+    var liveValues by remember { mutableStateOf("") }
+    var liveValuesStatus by remember { mutableStateOf("Live values not requested yet") }
     var diagnosticReport by remember { mutableStateOf("") }
     var diagnosticStatus by remember { mutableStateOf("Diagnostics not run") }
     var isDiagnosing by remember { mutableStateOf(false) }
@@ -156,6 +158,8 @@ fun EconetConnectScreen(
         selectedComponent = null
         installationDetails = null
         controllerProfiles = emptyList()
+        liveValues = ""
+        liveValuesStatus = "Requesting live controller values…"
         profileStatus = "Loading controller profile…"
         isLoading = true
         status = "Opening installation and retrieving configuration…"
@@ -178,7 +182,20 @@ fun EconetConnectScreen(
                     onSuccess = { profiles ->
                         controllerProfiles = profiles
                         profileStatus = "Loaded ${profiles.size} controller profile(s)"
-                        isLoading = false
+                        EcoNetCloudApi.fetchAvailableValues(
+                            installationId = installation.id,
+                            serviceId = details.serviceId,
+                            components = details.components,
+                            onSuccess = { report ->
+                                liveValues = report
+                                liveValuesStatus = "Live values received from controller"
+                                isLoading = false
+                            },
+                            onError = { message ->
+                                liveValuesStatus = "Live value request failed: $message"
+                                isLoading = false
+                            }
+                        )
                     },
                     onError = { message ->
                         profileStatus = message
@@ -273,68 +290,16 @@ fun EconetConnectScreen(
                         val controller = details.components.firstOrNull {
                             it.name.contains("Smart Wiring Centre", true) || it.componentType.contains("ecoMAX", true)
                         }
-                        Text("Domestic hot water settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                        Text(dumpStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                        if (parameterDump.isBlank() && !isDumping) {
-                            Button(onClick = {
-                                isDumping = true
-                                dumpStatus = "Reading DHW settings from controller…"
-                                EcoNetCloudApi.fetchRawParameterDump(
-                                    selected.id, details.serviceId,
-                                    listOfNotNull(controller),
-                                    onSuccess = { result ->
-                                        parameterDump = result
-                                        dumpStatus = "Controller values loaded"
-                                        isDumping = false
-                                    },
-                                    onError = { message ->
-                                        dumpStatus = "Could not load DHW values: $message"
-                                        isDumping = false
-                                    }
-                                )
-                            }, enabled = controller != null, modifier = Modifier.fillMaxWidth()) {
-                                Text("Load DHW settings")
-                            }
+                        Text("Domestic hot water", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        Text(liveValuesStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                        if (liveValues.isBlank()) {
+                            if (isLoading) CircularProgressIndicator()
+                            Text("Waiting for profile-defined live readings. No temperatures or setpoints will be shown until the controller returns them.")
+                        } else {
+                            EcoNetCloudStyleValues(liveValues)
                         }
-                        if (isDumping) CircularProgressIndicator()
-                        if (parameterDump.isNotBlank()) {
-                            val parsed = remember(parameterDump) { runCatching { JSONObject(parameterDump) }.getOrNull() }
-                            val component = parsed?.optJSONArray("components")?.optJSONObject(0)
-                            val params = component?.optJSONObject("parameters")
-                            @Composable fun dhwParameter(id: String, label: String) {
-                                val raw = params?.opt(id)
-                                val value = when (raw) {
-                                    is JSONArray -> raw.opt(2)?.toString() ?: "—"
-                                    is JSONObject -> raw.opt("value")?.toString() ?: "—"
-                                    else -> raw?.toString() ?: "—"
-                                }
-                                var edited by remember(parameterDump, id) { mutableStateOf(value) }
-                                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                        OutlinedTextField(
-                                            value = edited,
-                                            onValueChange = { edited = it },
-                                            label = { Text("Value") },
-                                            singleLine = true,
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                        Text("Controller parameter $id · current value $value", style = MaterialTheme.typography.bodySmall)
-                                    }
-                                }
-                            }
-                            dhwParameter("u71", "DHW set temperature")
-                            dhwParameter("u46", "DHW target / limit")
-                            Text(
-                                "Editing is staged locally only. The controller's write command has not yet been verified, so changes cannot safely be applied in this build.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                            Button(onClick = { isDumping = true; dumpStatus = "Refreshing DHW settings…"; parameterDump = ""; isDumping = false }, modifier = Modifier.fillMaxWidth()) {
-                                Text("Discard edits and refresh")
-                            }
-                        }
+                        Text("Controller profile: $profileStatus", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                        Text("MQTT: $mqttStatus", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                     }
                 } else if (isSignedIn) {
                     Text("Cloud account", style = MaterialTheme.typography.titleLarge)
