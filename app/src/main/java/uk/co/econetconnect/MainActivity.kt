@@ -208,24 +208,24 @@ fun EconetConnectScreen(
                         Button(
                             onClick = {
                                 isDumping = true
-                                dumpStatus = "Connecting and requesting raw parameter tables…"
+                                dumpStatus = "Loading device profiles and requesting available values…"
                                 parameterDump = ""
-                                EcoNetCloudApi.fetchParameterTableDump(
+                                EcoNetCloudApi.fetchAvailableValues(
                                     selected.id, details.components,
                                     onSuccess = { result ->
                                         parameterDump = result
-                                        dumpStatus = "Parameter dump received. Copy it and paste it into this chat."
+                                        dumpStatus = "Values retrieved. Copy the report and share it for analysis."
                                         isDumping = false
                                     },
                                     onError = { message ->
-                                        dumpStatus = "Parameter dump failed: $message"
+                                        dumpStatus = "Value retrieval failed: $message"
                                         isDumping = false
                                     }
                                 )
                             },
                             enabled = !isDumping,
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text(if (isDumping) "Retrieving parameter dump…" else "Retrieve parameter dump") }
+                        ) { Text(if (isDumping) "Retrieving available values…" else "Retrieve available values") }
                         Button(
                             onClick = {
                                 isDiagnosing = true
