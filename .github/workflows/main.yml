@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - feature/official-econet-cloud-integration
+      - recovery/build-58-baseline
 
 permissions:
   contents: read
