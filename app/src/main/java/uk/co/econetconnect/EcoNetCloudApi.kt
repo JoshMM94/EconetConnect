@@ -398,6 +398,88 @@ object EcoNetCloudApi {
      * installation for values using the reference client's GET_VALUES operation.
      * No circuit numbering or fixed parameter IDs are assumed.
      */
+    /**
+     * Read raw parameter tables directly from the controller. This deliberately does not
+     * depend on profile downloads, so a profile API 403 cannot block live-value discovery.
+     * Mirrors the official client's PARAM_TABLE_DUMP request and is read-only.
+     */
+    fun fetchRawParameterDump(
+        installationId: String,
+        components: List<EcoNetComponent>,
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        Amplify.Auth.fetchAuthSession({ authSession ->
+            try {
+                val session = authSession as? AWSCognitoAuthSession
+                    ?: throw IllegalStateException("Cognito session was not available.")
+                if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
+                val idToken = session.userPoolTokensResult.value?.idToken
+                    ?: throw IllegalStateException("Cognito ID token is unavailable.")
+                val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
+                    ?: throw IllegalStateException("AWS temporary credentials are unavailable.")
+                val principal = resolveMqttPrincipal(idToken)
+                Thread {
+                    var mqtt: EcoNetMqttClient? = null
+                    try {
+                        mqtt = EcoNetMqttClient(installationId, principal.first, credentials, principal.second)
+                        mqtt.connect()
+                        val output = JSONObject()
+                            .put("installationId", installationId)
+                            .put("retrievedAtUtc", java.time.Instant.now().toString())
+                            .put("method", "PARAM_TABLE_DUMP")
+                            .put("mqttPrincipalType", if (principal.second) "service" else "default")
+                            .put("components", JSONArray())
+                            .put("failedComponents", JSONArray())
+                        components.forEach { component ->
+                            if (component.serialNumber.isBlank() || component.serialNumber == "—") {
+                                output.getJSONArray("failedComponents").put(JSONObject()
+                                    .put("name", component.name).put("error", "Missing component serial number"))
+                            } else {
+                                try {
+                                    val response = mqtt!!.request(JSONObject()
+                                        .put("name", "PARAM_TABLE_DUMP")
+                                        .put("targets", JSONArray().put(JSONObject()
+                                            .put("component", component.serialNumber).put("isRaw", 1))))
+                                    val targets = response.optJSONArray("targets") ?: JSONArray()
+                                    val target = targets.optJSONObject(0)
+                                    if (target == null || target.optInt("statusCode", -1) != 0) {
+                                        output.getJSONArray("failedComponents").put(JSONObject()
+                                            .put("name", component.name).put("serialNumber", component.serialNumber)
+                                            .put("response", target ?: response))
+                                    } else {
+                                        output.getJSONArray("components").put(JSONObject()
+                                            .put("name", component.name)
+                                            .put("serialNumber", component.serialNumber)
+                                            .put("componentType", component.componentType)
+                                            .put("hardwareVersion", component.hardwareVersion)
+                                            .put("softwareVersion", component.softwareVersion)
+                                            .put("parameters", target.opt("parameters") ?: JSONObject()))
+                                    }
+                                } catch (e: Exception) {
+                                    output.getJSONArray("failedComponents").put(JSONObject()
+                                        .put("name", component.name).put("serialNumber", component.serialNumber)
+                                        .put("error", e.message ?: e.javaClass.simpleName))
+                                }
+                            }
+                        }
+                        if (output.getJSONArray("components").length() == 0) {
+                            throw IllegalStateException("MQTT connected, but no component returned a successful PARAM_TABLE_DUMP. " +
+                                output.getJSONArray("failedComponents").toString())
+                        }
+                        Handler(Looper.getMainLooper()).post { onSuccess(output.toString(2)) }
+                    } catch (e: Exception) {
+                        Handler(Looper.getMainLooper()).post { onError(e.message ?: "Raw parameter retrieval failed.") }
+                    } finally {
+                        try { mqtt?.disconnect() } catch (_: Exception) {}
+                    }
+                }.start()
+            } catch (e: Exception) {
+                onError(e.message ?: "Could not prepare raw parameter request.")
+            }
+        }, { error -> onError(error.localizedMessage ?: "Could not retrieve authenticated AWS session.") })
+    }
+
     fun fetchAvailableValues(
         installationId: String,
         components: List<EcoNetComponent>,
