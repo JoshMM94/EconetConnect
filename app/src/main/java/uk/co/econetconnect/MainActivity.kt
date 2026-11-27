@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import com.amplifyframework.core.Amplify
 import com.amplifyframework.auth.cognito.AWSCognitoAuthPlugin
+import com.amplifyframework.auth.cognito.AWSCognitoAuthSession
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -209,6 +210,35 @@ fun EconetConnectScreen(
                 status = message
             }
         )
+    }
+
+    // Restore the persisted Cognito session when the activity is recreated.
+    // Closing the app must not require the user to authenticate a second time.
+    LaunchedEffect(amplifyReady) {
+        if (amplifyReady) {
+            isLoading = true
+            status = "Checking for an existing ecoNET Cloud session…"
+            Amplify.Auth.fetchAuthSession(
+                { authSession ->
+                    val cognitoSession = authSession as? AWSCognitoAuthSession
+                    if (cognitoSession?.isSignedIn == true) {
+                        isSignedIn = true
+                        email = runCatching { Amplify.Auth.getCurrentUser().username }.getOrDefault("")
+                        status = "Existing session restored. Retrieving your installations…"
+                        loadInstallations()
+                    } else {
+                        isLoading = false
+                        isSignedIn = false
+                        status = "Not connected"
+                    }
+                },
+                { error ->
+                    isLoading = false
+                    isSignedIn = false
+                    status = "Could not restore the saved session: ${error.localizedMessage ?: "Please sign in."}"
+                }
+            )
+        }
     }
 
     MaterialTheme {
