@@ -34,3 +34,5 @@ Push this folder to a GitHub repository. GitHub Actions builds a debug APK and p
 
 ## Portal WebView diagnostics
 The portal is loaded only after the Android WebView is attached. The app uses a standard mobile browser user-agent and reports whether the document body contains readable text after page load.
+
+Build note: AndroidView now returns the existing WebView instance from its factory, preserving the correct Compose factory contract.
