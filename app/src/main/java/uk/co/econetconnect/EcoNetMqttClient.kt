@@ -3,7 +3,7 @@ package uk.co.econetconnect
 import com.amplifyframework.auth.AWSTemporaryCredentials
 import com.amazonaws.DefaultRequest
 import com.amazonaws.auth.AWS4Signer
-import com.amazonaws.auth.BasicSessionCredentials
+import com.amazonaws.auth.BasicAWSCredentials
 import com.amazonaws.http.HttpMethodName
 import okhttp3.*
 import okio.ByteString
