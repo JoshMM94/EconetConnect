@@ -347,6 +347,7 @@ object EcoNetCloudApi {
 
     fun runTransportDiagnostics(
         installationId: String,
+        serviceId: String,
         components: List<EcoNetComponent>,
         onSuccess: (String) -> Unit,
         onError: (String) -> Unit
