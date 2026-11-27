@@ -270,20 +270,25 @@ class EcoNetMqttClient(
     }
 
     private fun presignedWebSocketUrl(creds: AWSTemporaryCredentials): String {
+        // Restore the exact signing behaviour from the successful Build #52 transport:
+        // sign access key + secret first, then append the temporary session token.
+        // The 403 regression began after d3079de switched to BasicSessionCredentials
+        // and included the session token in the SigV4 canonical query.
         val request = DefaultRequest<Any>(SERVICE).apply {
             setEndpoint(URI.create("https://$ENDPOINT"))
             setResourcePath("/mqtt")
             setHttpMethod(HttpMethodName.GET)
         }
         val signer = AWS4Signer().apply { setRegionName(REGION); setServiceName(SERVICE) }
-        // The temporary session token must be part of the SigV4 presigned query
-        // BEFORE the signature is calculated. Appending it afterwards invalidates
-        // the canonical request used by AWS IoT.
-        signer.presignRequest(request, BasicSessionCredentials(
-            creds.accessKeyId, creds.secretAccessKey, creds.sessionToken
-        ), Date(System.currentTimeMillis() + 900_000L))
-        val query = request.parameters.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
-        return "wss://$ENDPOINT/mqtt?$query"
+        signer.presignRequest(
+            request,
+            BasicAWSCredentials(creds.accessKeyId, creds.secretAccessKey),
+            Date(System.currentTimeMillis() + 900_000L)
+        )
+        val query = request.parameters.entries.joinToString("&") {
+            "${encode(it.key)}=${encode(it.value)}"
+        }
+        return "wss://$ENDPOINT/mqtt?$query&X-Amz-Security-Token=${encode(creds.sessionToken)}"
     }
 
     private fun encode(value: String): String =
