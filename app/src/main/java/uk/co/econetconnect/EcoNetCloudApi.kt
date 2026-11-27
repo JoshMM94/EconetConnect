@@ -269,17 +269,11 @@ object EcoNetCloudApi {
                         ?: throw IllegalStateException("Cognito ID token is unavailable.")
                     val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                         ?: throw IllegalStateException("AWS temporary credentials could not be obtained.")
-                    val groups = cognitoGroups(idToken)
-                    val serviceRole = groups.contains("ServiceCompanyManagers")
-                    // Exact official-client flow: installations/initializeInstallationAndConnect
-                    // passes Amplify Auth.fetchAuthSession().identityId as userId for DEFAULT.
-                    // RU then appends "-<timestamp>" to this value when building MQTT clientId.
-                    val mqttClientId = if (serviceRole) {
-                        cognitoSubject(idToken) ?: throw IllegalStateException("Authenticated Cognito subject is unavailable.")
-                    } else {
-                        session.identityIdResult.value
-                            ?: throw IllegalStateException("Cognito Identity Pool identity ID is unavailable for DEFAULT MQTT login.")
-                    }
+                    // Match econet-api-client: use the Cognito Identity Pool identity ID as MQTT userId.
+                    // EcoNetMqttClient appends the timestamp to form the MQTT client ID.
+                    val mqttClientId = session.identityIdResult.value
+                        ?: throw IllegalStateException("Cognito Identity Pool identity ID is unavailable for MQTT login.")
+                    val serviceRole = false
                     Thread {
                         var mqtt: EcoNetMqttClient? = null
                         try {
@@ -361,14 +355,10 @@ object EcoNetCloudApi {
                     ?: throw IllegalStateException("Cognito ID token unavailable.")
                 val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                     ?: throw IllegalStateException("AWS temporary credentials unavailable.")
-                val groups = cognitoGroups(idToken)
-                val serviceRole = groups.contains("ServiceCompanyManagers")
-                val mqttClientId = if (serviceRole) {
-                    cognitoSubject(idToken) ?: throw IllegalStateException("Authenticated Cognito subject unavailable.")
-                } else {
-                    cognitoSubject(idToken)
-                        ?: throw IllegalStateException("Authenticated Cognito user ID (sub) is unavailable.")
-                }
+                // Match the reference client's DEFAULT identity path.
+                val mqttClientId = session.identityIdResult.value
+                    ?: throw IllegalStateException("Cognito Identity Pool identity ID is unavailable for MQTT login.")
+                val serviceRole = false
                 Thread {
                     val report = StringBuilder()
                     report.appendLine("Econet Connect transport diagnostics")
@@ -413,14 +403,10 @@ object EcoNetCloudApi {
                     ?: throw IllegalStateException("Cognito ID token unavailable.")
                 val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                     ?: throw IllegalStateException("AWS temporary credentials are unavailable.")
-                val groups = cognitoGroups(idToken)
-                val serviceRole = groups.contains("ServiceCompanyManagers")
-                val mqttClientId = if (serviceRole) {
-                    cognitoSubject(idToken) ?: throw IllegalStateException("Authenticated Cognito subject unavailable.")
-                } else {
-                    cognitoSubject(idToken)
-                        ?: throw IllegalStateException("Authenticated Cognito user ID (sub) is unavailable.")
-                }
+                // Match the reference client's DEFAULT identity path.
+                val mqttClientId = session.identityIdResult.value
+                    ?: throw IllegalStateException("Cognito Identity Pool identity ID is unavailable for MQTT login.")
+                val serviceRole = false
                 Thread {
                     var mqtt: EcoNetMqttClient? = null
                     try {
