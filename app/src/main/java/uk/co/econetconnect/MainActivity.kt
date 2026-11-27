@@ -246,7 +246,7 @@ fun EconetConnectScreen(
                                 dumpStatus = "Loading device profiles and requesting available values…"
                                 parameterDump = ""
                                 EcoNetCloudApi.fetchRawParameterDump(
-                                    selected.id, details.components,
+                                    selected.id, details.serviceId, details.components,
                                     onSuccess = { result ->
                                         parameterDump = result
                                         dumpStatus = "Values retrieved. Copy the report and share it for analysis."
@@ -267,7 +267,7 @@ fun EconetConnectScreen(
                                 diagnosticStatus = "Running signed WebSocket handshake and installation metadata checks…"
                                 diagnosticReport = ""
                                 EcoNetCloudApi.runTransportDiagnostics(
-                                    selected.id, details.components,
+                                    selected.id, details.serviceId, details.components,
                                     onSuccess = { result ->
                                         diagnosticReport = result
                                         diagnosticStatus = "Diagnostics complete. Copy the report and paste it into this chat."
