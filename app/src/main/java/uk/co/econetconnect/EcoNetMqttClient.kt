@@ -49,6 +49,7 @@ class EcoNetMqttClient(
     @Volatile private var subAckCodes: IntArray? = null
     @Volatile private var lastResponse: JSONObject? = null
     @Volatile private var socketFailure: String? = null
+    @Volatile private var lastInboundFrame: String? = null
 
     @Synchronized
     fun connect() {
@@ -63,7 +64,17 @@ class EcoNetMqttClient(
                 opened.countDown()
             }
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-                handleMqttBytes(bytes.toByteArray())
+                val raw = bytes.toByteArray()
+                lastInboundFrame = "binary length=${raw.size}, hex=" + raw.take(32).joinToString(" ") { "%02X".format(it) }
+                handleMqttBytes(raw)
+            }
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                lastInboundFrame = "text length=${text.length}, preview=" + text.take(160)
+                synchronized(monitor) { monitor.notifyAll() }
+            }
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                socketFailure = "WebSocket closing ($code): $reason"
+                synchronized(monitor) { monitor.notifyAll() }
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 val body = try { response?.body?.string().orEmpty().take(500) } catch (_: Exception) { "" }
@@ -87,7 +98,7 @@ class EcoNetMqttClient(
         if (socket?.send(ByteString.of(*mqttPacket(0x10, connectBody))) != true) {
             throw IllegalStateException("Could not send MQTT CONNECT.")
         }
-        waitUntil(10_000L, "Timed out waiting for MQTT CONNACK.") {
+        waitUntil(10_000L, "Timed out waiting for MQTT CONNACK. Last inbound frame: ${lastInboundFrame ?: "(none)"}") {
             connAckCode != null || connAckError != null || socketFailure != null
         }
         socketFailure?.let { throw IllegalStateException("WebSocket closed before MQTT CONNACK: $it") }
