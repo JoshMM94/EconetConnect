@@ -1,0 +1,1 @@
+Build trigger for regenerating APK from commit 3e9dda1dfefba1dc46c5bb46324bfb75db8746db.
