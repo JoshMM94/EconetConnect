@@ -231,127 +231,80 @@ fun EconetConnectScreen(
                 if (selectedInstallation != null) {
                     val selected = selectedInstallation!!
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        TextButton(onClick = { selectedInstallation = null; selectedComponent = null; installationDetails = null; status = "Installation list" }) {
+                        TextButton(onClick = { selectedInstallation = null; installationDetails = null; parameterDump = ""; status = "Installation list" }) {
                             Text("← Installations")
                         }
                         TextButton(onClick = { openInstallation(selected) }, enabled = !isLoading) { Text("Refresh") }
                     }
-                    Text(installationDetails?.name ?: selected.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Serial: ${selected.factoryNumber}")
+                    Text("DHW", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Text(installationDetails?.name ?: selected.name, style = MaterialTheme.typography.bodyMedium)
                     if (isLoading && installationDetails == null) CircularProgressIndicator()
                     installationDetails?.let { details ->
-                        Button(
-                            onClick = {
+                        val controller = details.components.firstOrNull {
+                            it.name.contains("Smart Wiring Centre", true) || it.componentType.contains("ecoMAX", true)
+                        }
+                        Text("Domestic hot water settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        Text(dumpStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                        if (parameterDump.isBlank() && !isDumping) {
+                            Button(onClick = {
                                 isDumping = true
-                                dumpStatus = "Loading device profiles and requesting available values…"
-                                parameterDump = ""
+                                dumpStatus = "Reading DHW settings from controller…"
                                 EcoNetCloudApi.fetchRawParameterDump(
-                                    selected.id, details.serviceId, details.components,
+                                    selected.id, details.serviceId,
+                                    listOfNotNull(controller),
                                     onSuccess = { result ->
                                         parameterDump = result
-                                        dumpStatus = "Values retrieved. Copy the report and share it for analysis."
+                                        dumpStatus = "Controller values loaded"
                                         isDumping = false
                                     },
                                     onError = { message ->
-                                        dumpStatus = "Value retrieval failed: $message"
+                                        dumpStatus = "Could not load DHW values: $message"
                                         isDumping = false
                                     }
                                 )
-                            },
-                            enabled = !isDumping,
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text(if (isDumping) "Retrieving available values…" else "Retrieve available values") }
-                        Button(
-                            onClick = {
-                                isDiagnosing = true
-                                diagnosticStatus = "Running signed WebSocket handshake and installation metadata checks…"
-                                diagnosticReport = ""
-                                EcoNetCloudApi.runTransportDiagnostics(
-                                    selected.id, details.serviceId, details.components,
-                                    onSuccess = { result ->
-                                        diagnosticReport = result
-                                        diagnosticStatus = "Diagnostics complete. Copy the report and paste it into this chat."
-                                        isDiagnosing = false
-                                    },
-                                    onError = { error ->
-                                        diagnosticStatus = "Diagnostics failed to run: $error"
-                                        isDiagnosing = false
-                                    }
-                                )
-                            },
-                            enabled = !isDiagnosing,
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text(if (isDiagnosing) "Running diagnostics…" else "Run full connection diagnostics") }
-                        Text(diagnosticStatus, style = MaterialTheme.typography.bodySmall)
-                        if (diagnosticReport.isNotBlank()) {
-                            Button(onClick = { clipboard.setText(AnnotatedString(diagnosticReport)) }) {
-                                Text("Copy diagnostic report")
+                            }, enabled = controller != null, modifier = Modifier.fillMaxWidth()) {
+                                Text("Load DHW settings")
                             }
-                            Text(diagnosticReport.take(1400) + if (diagnosticReport.length > 1400) "\\n… preview truncated; copy the full report above." else "",
-                                style = MaterialTheme.typography.bodySmall)
                         }
-                        Text("Diagnostics · read-only", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Text(dumpStatus, style = MaterialTheme.typography.bodySmall)
+                        if (isDumping) CircularProgressIndicator()
                         if (parameterDump.isNotBlank()) {
-                            Button(onClick = { clipboard.setText(AnnotatedString(parameterDump)) }) {
-                                Text("Copy full parameter dump")
-                            }
-                            EcoNetCloudStyleValues(parameterDump)
-                        }
-                        selectedComponent?.let { component ->
-                            HorizontalDivider()
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text("Device details", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                                TextButton(onClick = { selectedComponent = null }) { Text("Close") }
-                            }
-                            Text(component.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                            Text(component.componentType.ifBlank { component.name })
-                            Text("Serial: ${component.serialNumber}")
-                            Text("Firmware: ${component.softwareVersion} · Hardware: ${component.hardwareVersion}")
-                            val matchingProfile = controllerProfiles.firstOrNull { it.componentName == component.name }
-                            Text(
-                                if (matchingProfile != null) "Controller profile loaded" else profileStatus,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.secondary
-                            )
-                            Button(
-                                onClick = {
-                                    isDumping = true
-                                    dumpStatus = "Requesting values for ${component.name}…"
-                                    parameterDump = ""
-                                    EcoNetCloudApi.fetchRawParameterDump(
-                                        selected.id, details.serviceId, listOf(component),
-                                        onSuccess = { result ->
-                                            parameterDump = result
-                                            dumpStatus = "Values retrieved for ${component.name}."
-                                            isDumping = false
-                                        },
-                                        onError = { message ->
-                                            dumpStatus = "Value retrieval failed: $message"
-                                            isDumping = false
-                                        }
-                                    )
-                                },
-                                enabled = !isDumping,
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text(if (isDumping) "Retrieving device values…" else "Retrieve this device's values") }
-                        }
-                        Text("Installation components", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                        Text(if (details.connected) "Installation connected" else "Installation offline",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                        details.components.forEach { component ->
-                            ElevatedCard(modifier = Modifier.fillMaxWidth().clickable { selectedComponent = component }) {
-                                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                    Text(component.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                    Text(component.componentType, style = MaterialTheme.typography.bodyMedium)
-                                    Text("Serial: ${component.serialNumber}", style = MaterialTheme.typography.bodySmall)
-                                    Text("Firmware: ${component.softwareVersion} · Hardware: ${component.hardwareVersion}",
-                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                            val parsed = remember(parameterDump) { runCatching { JSONObject(parameterDump) }.getOrNull() }
+                            val component = parsed?.optJSONArray("components")?.optJSONObject(0)
+                            val params = component?.optJSONObject("parameters")
+                            @Composable fun dhwParameter(id: String, label: String) {
+                                val raw = params?.opt(id)
+                                val value = when (raw) {
+                                    is JSONArray -> raw.opt(2)?.toString() ?: "—"
+                                    is JSONObject -> raw.opt("value")?.toString() ?: "—"
+                                    else -> raw?.toString() ?: "—"
+                                }
+                                var edited by remember(parameterDump, id) { mutableStateOf(value) }
+                                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                        OutlinedTextField(
+                                            value = edited,
+                                            onValueChange = { edited = it },
+                                            label = { Text("Value") },
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        Text("Controller parameter $id · current value $value", style = MaterialTheme.typography.bodySmall)
+                                    }
                                 }
                             }
+                            dhwParameter("u71", "DHW set temperature")
+                            dhwParameter("u46", "DHW target / limit")
+                            Text(
+                                "Editing is staged locally only. The controller's write command has not yet been verified, so changes cannot safely be applied in this build.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Button(onClick = { isDumping = true; dumpStatus = "Refreshing DHW settings…"; parameterDump = ""; isDumping = false }, modifier = Modifier.fillMaxWidth()) {
+                                Text("Discard edits and refresh")
+                            }
                         }
-                        Text(profileStatus, style = MaterialTheme.typography.bodySmall)
-                        Text(mqttStatus, style = MaterialTheme.typography.bodySmall)
                     }
                 } else if (isSignedIn) {
                     Text("Cloud account", style = MaterialTheme.typography.titleLarge)
