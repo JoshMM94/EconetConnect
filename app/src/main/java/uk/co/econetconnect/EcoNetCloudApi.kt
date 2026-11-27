@@ -36,6 +36,7 @@ data class EcoNetInstallationDetails(
     val connected: Boolean, val hasAlarms: Boolean, val softwareVersion: String,
     val hardwareVersion: String, val components: List<EcoNetComponent>,
     val invalidComponents: List<String>,
+    val serviceId: String = "",
     val registrationStatus: String = "Not started"
 )
 
@@ -177,7 +178,8 @@ object EcoNetCloudApi {
                                 hasAlarms = info.optBoolean("hasAlarms", false),
                                 softwareVersion = info.optString("softVersion").ifBlank { "—" },
                                 hardwareVersion = info.optString("hardwareVersion").ifBlank { "—" },
-                                components = components, invalidComponents = invalid
+                                components = components, invalidComponents = invalid,
+                                serviceId = info.optString("serviceId").takeIf { it.isNotBlank() && it != "null" } ?: ""
                             )
                             Handler(Looper.getMainLooper()).post { onSuccess(details) }
                         } catch (error: Exception) {
@@ -255,6 +257,7 @@ object EcoNetCloudApi {
      */
     fun connectAndRegisterComponents(
         installationId: String,
+        serviceId: String,
         components: List<EcoNetComponent>,
         onSuccess: (String) -> Unit,
         onError: (String) -> Unit
@@ -269,11 +272,11 @@ object EcoNetCloudApi {
                         ?: throw IllegalStateException("Cognito ID token is unavailable.")
                     val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                         ?: throw IllegalStateException("AWS temporary credentials could not be obtained.")
-                    // Match econet-api-client: use the Cognito Identity Pool identity ID as MQTT userId.
-                    // EcoNetMqttClient appends the timestamp to form the MQTT client ID.
-                    // Official ecoNET principal: serviceId for service roles, otherwise userId.
-                    // Cognito Identity Pool UUID is only the AWS credential identity, not the MQTT principal.
-                    val mqttPrincipal = resolveMqttPrincipal(idToken)
+                    val identityId = session.identityIdResult.value
+                        ?: throw IllegalStateException("Cognito Identity Pool identity ID is unavailable.")
+                    // Official Cloud: group -> role; service roles use installation.serviceId,
+                    // default users use the Cognito Identity Pool identityId.
+                    val mqttPrincipal = resolveMqttPrincipal(idToken, identityId, serviceId)
                     val mqttClientId = mqttPrincipal.first
                     val serviceRole = mqttPrincipal.second
                     Thread {
@@ -361,7 +364,9 @@ object EcoNetCloudApi {
                 // Match the reference client's DEFAULT identity path.
                 // Official ecoNET principal: serviceId for service roles, otherwise userId.
                 // Cognito Identity Pool UUID is only the AWS credential identity, not the MQTT principal.
-                val mqttPrincipal = resolveMqttPrincipal(idToken)
+                val identityId = session.identityIdResult.value
+                    ?: throw IllegalStateException("Cognito Identity Pool identity ID is unavailable.")
+                val mqttPrincipal = resolveMqttPrincipal(idToken, identityId, serviceId)
                 val mqttClientId = mqttPrincipal.first
                 val serviceRole = mqttPrincipal.second
                 Thread {
@@ -405,6 +410,7 @@ object EcoNetCloudApi {
      */
     fun fetchRawParameterDump(
         installationId: String,
+        serviceId: String,
         components: List<EcoNetComponent>,
         onSuccess: (String) -> Unit,
         onError: (String) -> Unit
@@ -418,7 +424,9 @@ object EcoNetCloudApi {
                     ?: throw IllegalStateException("Cognito ID token is unavailable.")
                 val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                     ?: throw IllegalStateException("AWS temporary credentials are unavailable.")
-                val principal = resolveMqttPrincipal(idToken)
+                val identityId = session.identityIdResult.value
+                    ?: throw IllegalStateException("Cognito Identity Pool identity ID is unavailable.")
+                val principal = resolveMqttPrincipal(idToken, identityId, serviceId)
                 Thread {
                     var mqtt: EcoNetMqttClient? = null
                     try {
@@ -584,6 +592,7 @@ object EcoNetCloudApi {
     }
     fun fetchParameterTableDump(
         installationId: String,
+        serviceId: String,
         components: List<EcoNetComponent>,
         onSuccess: (String) -> Unit,
         onError: (String) -> Unit
@@ -687,7 +696,11 @@ object EcoNetCloudApi {
         }, { error -> onError(error.localizedMessage ?: "Could not retrieve authenticated AWS session.") })
     }
 
-    private fun resolveMqttPrincipal(idToken: String): Pair<String, Boolean> {
+    private fun resolveMqttPrincipal(
+        idToken: String,
+        identityId: String,
+        installationServiceId: String
+    ): Pair<String, Boolean> {
         val payload = idToken.split(".").getOrNull(1)
             ?: throw IllegalStateException("Cognito ID token payload is missing.")
         val decoded = String(
@@ -699,17 +712,33 @@ object EcoNetCloudApi {
         val claims = JSONObject(decoded)
         val groups = claims.optJSONArray("cognito:groups") ?: JSONArray()
         val groupNames = (0 until groups.length()).map { groups.optString(it) }
-        val serviceRole = groupNames.any {
-            it in setOf("ServiceUsers", "VatServicemanUsers", "ServiceModerators",
-                "ServiceCompanyManagers", "PlumServiceUsers", "ModeratorUsers")
+        // Mirrors the official client's jA() precedence and role mapping.
+        val role = when {
+            "ServiceUsers" in groupNames -> 7
+            "VatServicemanUsers" in groupNames -> 8
+            "ServiceModerators" in groupNames -> 9
+            "ServiceCompanyManagers" in groupNames -> 10
+            "PlumServiceUsers" in groupNames -> 11
+            "ModeratorUsers" in groupNames -> 12
+            "ProducerUsers" in groupNames -> 1
+            "DistributorUsers" in groupNames -> 4
+            "DistributorModerators" in groupNames -> 5
+            "DistributorManagers" in groupNames -> 6
+            "ProducerModerators" in groupNames -> 2
+            "ProducerManagers" in groupNames -> 3
+            "AdminUsers" in groupNames -> 13
+            "PlumProducerUsers" in groupNames -> 14
+            "RootUsers" in groupNames -> 15
+            else -> 0
         }
-        val serviceId = listOf("custom:serviceId", "serviceId", "custom:service_id", "service_id")
-            .firstNotNullOfOrNull { key -> claims.optString(key).takeIf { it.isNotBlank() && it != "null" } }
-        val userId = listOf("cognito:username", "username")
-            .firstNotNullOfOrNull { key -> claims.optString(key).takeIf { it.isNotBlank() && it != "null" } }
-        val principal = if (serviceRole) serviceId ?: userId else userId
-        return (principal?.takeIf { it.isNotBlank() }
-            ?: throw IllegalStateException("Official MQTT principal not found in Cognito token claims.")) to serviceRole
+        return if (role == 0) identityId to false else {
+            if (installationServiceId.isBlank()) {
+                throw IllegalStateException(
+                    "Official role $role requires installation.serviceId, but the installation details API returned it empty."
+                )
+            }
+            installationServiceId to true
+        }
     }
 
     private fun cognitoSubject(idToken: String): String? = try {
