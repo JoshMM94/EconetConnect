@@ -385,7 +385,7 @@ object EcoNetCloudApi {
                         val probe = EcoNetMqttClient(installationId, mqttClientId, credentials, serviceRole)
                         report.appendLine()
                         report.appendLine("AWS IoT WebSocket handshake probe")
-                        report.append(probe.diagnoseWebSocketHandshake())
+                        report.append(probe.diagnoseWebSocketHandshake("installation diagnostics"))
                         probe.disconnect()
                     } catch (e: Exception) {
                         report.appendLine("Probe setup failed: ${e.message}")
