@@ -244,7 +244,7 @@ fun EconetConnectScreen(
                                 isDumping = true
                                 dumpStatus = "Loading device profiles and requesting available values…"
                                 parameterDump = ""
-                                EcoNetCloudApi.fetchAvailableValues(
+                                EcoNetCloudApi.fetchRawParameterDump(
                                     selected.id, details.components,
                                     onSuccess = { result ->
                                         parameterDump = result
@@ -318,7 +318,7 @@ fun EconetConnectScreen(
                                     isDumping = true
                                     dumpStatus = "Requesting values for ${component.name}…"
                                     parameterDump = ""
-                                    EcoNetCloudApi.fetchAvailableValues(
+                                    EcoNetCloudApi.fetchRawParameterDump(
                                         selected.id, listOf(component),
                                         onSuccess = { result ->
                                             parameterDump = result
