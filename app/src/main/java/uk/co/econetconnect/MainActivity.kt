@@ -167,15 +167,8 @@ fun EconetConnectScreen(
             installation.id,
             onSuccess = { details ->
                 installationDetails = details
-                status = "Installation details retrieved. Connecting MQTT and registering components…"
-                mqttStatus = "Connecting to AWS IoT MQTT…"
-                EcoNetCloudApi.connectAndRegisterComponents(
-                    installationId = installation.id,
-                    serviceId = details.serviceId,
-                    components = details.components,
-                    onSuccess = { result -> mqttStatus = result },
-                    onError = { message -> mqttStatus = "MQTT / registration failed: $message" }
-                )
+                status = "Installation details retrieved. Loading controller profiles and live readings…"
+                mqttStatus = "Live-value request will establish its own read-only MQTT session."
                 profileStatus = "Loading profiles for discovered components…"
                 EcoNetCloudApi.fetchControllerProfiles(
                     details.components,
