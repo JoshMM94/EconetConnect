@@ -104,7 +104,7 @@ private fun EcoNetCloudStyleValues(report: String) {
         ) {
             Text("LIVE READINGS", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
             Text(
-                root.optString("retrievedAtUtc").take(19).replace("T", " "),
+                root?.optString("retrievedAtUtc").orEmpty().take(19).replace("T", " ") + " UTC",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.secondary
             )
