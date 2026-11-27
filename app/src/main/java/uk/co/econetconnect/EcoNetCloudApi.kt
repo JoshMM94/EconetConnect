@@ -490,6 +490,7 @@ object EcoNetCloudApi {
 
     fun fetchAvailableValues(
         installationId: String,
+        serviceId: String,
         components: List<EcoNetComponent>,
         onSuccess: (String) -> Unit,
         onError: (String) -> Unit
