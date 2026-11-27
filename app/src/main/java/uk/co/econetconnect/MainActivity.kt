@@ -165,6 +165,7 @@ fun EconetConnectScreen(
                 mqttStatus = "Connecting to AWS IoT MQTT…"
                 EcoNetCloudApi.connectAndRegisterComponents(
                     installationId = installation.id,
+                    serviceId = details.serviceId,
                     components = details.components,
                     onSuccess = { result -> mqttStatus = result },
                     onError = { message -> mqttStatus = "MQTT / registration failed: $message" }
@@ -319,7 +320,7 @@ fun EconetConnectScreen(
                                     dumpStatus = "Requesting values for ${component.name}…"
                                     parameterDump = ""
                                     EcoNetCloudApi.fetchRawParameterDump(
-                                        selected.id, listOf(component),
+                                        selected.id, details.serviceId, listOf(component),
                                         onSuccess = { result ->
                                             parameterDump = result
                                             dumpStatus = "Values retrieved for ${component.name}."
