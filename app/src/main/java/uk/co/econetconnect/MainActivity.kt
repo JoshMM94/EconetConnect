@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import com.amplifyframework.core.Amplify
 import com.amplifyframework.auth.cognito.AWSCognitoAuthPlugin
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     private var amplifyReady = false
@@ -80,6 +81,37 @@ private fun ParameterHomeCard(
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(value, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
             Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+        }
+    }
+}
+
+@Composable
+private fun EcoNetCloudStyleValues(report: String) {
+    val root = remember(report) { runCatching { JSONObject(report) }.getOrNull() }
+    val components = root?.optJSONArray("components")
+    if (components == null) { Text("No decoded values available yet."); return }
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("Live installation data", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        for (i in 0 until components.length()) {
+            val component = components.optJSONObject(i) ?: continue
+            Text(component.optString("name", "Device"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            val values = component.optJSONArray("values") ?: continue
+            var shown = 0
+            for (j in 0 until values.length()) {
+                val item = values.optJSONObject(j) ?: continue
+                if (item.has("_request")) continue
+                val label = item.optString("label").ifBlank { item.optString("key") }
+                val value = item.opt("value")?.toString() ?: "—"
+                val unit = item.optString("unit")
+                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
+                        Text(value + if (unit.isNotBlank()) " $unit" else "", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                shown++
+            }
+            if (shown == 0) Text("No values returned for this device yet.", color = MaterialTheme.colorScheme.secondary)
         }
     }
 }
@@ -261,9 +293,7 @@ fun EconetConnectScreen(
                             Button(onClick = { clipboard.setText(AnnotatedString(parameterDump)) }) {
                                 Text("Copy full parameter dump")
                             }
-                            Text("Descriptions will be matched from controller profiles where available; unmatched entries remain raw IDs and values.", style = MaterialTheme.typography.bodySmall)
-                            Text(parameterDump.take(1600) + if (parameterDump.length > 1600) "\n… preview truncated; copy the full dump above." else "",
-                                style = MaterialTheme.typography.bodySmall)
+                            EcoNetCloudStyleValues(parameterDump)
                         }
                         CircuitHomeScreen(
                             installationName = details.name,
