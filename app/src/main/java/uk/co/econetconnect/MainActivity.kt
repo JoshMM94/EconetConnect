@@ -224,7 +224,7 @@ private fun EconetDashboardApp() {
                         if (pageProgress in 1..99) LinearProgressIndicator(progress = { pageProgress / 100f }, modifier = Modifier.fillMaxWidth())
                         if (pageError.isNotBlank()) Text(pageError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     }
-                    AndroidView(factory = { view -> if (view.url.isNullOrBlank()) view.loadUrl(ECONET_PORTAL); view }, modifier = Modifier.fillMaxSize())
+                    AndroidView(factory = { webView.also { view -> if (view.url.isNullOrBlank()) view.loadUrl(ECONET_PORTAL) } }, modifier = Modifier.fillMaxSize())
                 }
             } else {
                 Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
