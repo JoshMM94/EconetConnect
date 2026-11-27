@@ -65,9 +65,9 @@ private fun parseDashboard(source: String): DashboardValues {
     }
     return DashboardValues(
         find("Heat pump status", "Operating status", "Device status", "On/Off", "Running state", "Status"),
-        find("Flow temperature", "Flow temp", "Leaving water temperature", "LWT"),
-        find("Return temperature", "Return temp", "Entering water temperature", "RWT"),
-        find("Flow rate", "Water flow", "Water flow rate"),
+        find("Heating flow temperature", "Flow temperature", "Flow temp", "Leaving water temperature", "LWT", "Outlet water temperature"),
+        find("Heating return temperature", "Return temperature", "Return temp", "Entering water temperature", "RWT", "Inlet water temperature"),
+        find("Water flow rate", "Flow rate", "Water flow", "Flow"),
         find("Compressor frequency", "Compressor freq", "Compressor Hz", "Compressor speed"),
         find("Fan RPM", "Fan speed", "Fan rotation speed"),
         find("Flow set temperature", "Flow target", "Water setpoint", "Heating set temperature", "Set temperature"),
@@ -76,8 +76,8 @@ private fun parseDashboard(source: String): DashboardValues {
         find("Weather curve", "Heating curve", "Compensation curve"),
         find("Room setpoint", "Requested room temperature", "Target room temp"),
         find("Hysteresis", "Room hysteresis", "Temperature hysteresis"),
-        find("DHW temperature", "Hot water temperature", "Domestic hot water temperature", "Tank temperature"),
-        find("DHW target", "Hot water target", "DHW set temperature", "Domestic hot water setpoint")
+        find("DHW actual temperature", "Current DHW temperature", "DHW temperature", "DHW temp", "Hot water current temperature", "Hot water temperature", "Domestic hot water actual temperature", "Domestic hot water temperature", "Tank temperature", "Tank water temperature"),
+        find("DHW target temperature", "DHW set temperature", "DHW set temp", "Hot water target temperature", "Hot water set temperature", "Hot water target", "Domestic hot water setpoint", "Domestic hot water set temperature", "Tank set temperature")
     )
 }
 
@@ -283,16 +283,18 @@ private fun EconetDashboardApp() {
                             }
                         }
                     }
-                    DashboardSection("HEAT PUMP", v.state) {
-                        MetricGrid(listOf("Flow" to v.flow, "Return" to v.ret, "Flow rate" to v.rate,
-                            "Compressor frequency" to v.compressor, "Fan RPM" to v.fan, "Set temp" to v.hpSet))
+                    DashboardSection("HEATING", v.state) {
+                        MetricGrid(listOf(
+                            "Flow temperature" to v.flow,
+                            "Return temperature" to v.ret,
+                            "Water flow rate" to v.rate
+                        ))
                     }
-                    DashboardSection("ROOM HEATING", null) {
-                        MetricGrid(listOf("Room temp" to v.room, "Room target" to v.roomTarget,
-                            "Weather curve" to v.curve, "Set temp" to v.roomSet, "Hysteresis" to v.hysteresis))
-                    }
-                    DashboardSection("HOT WATER", null) {
-                        MetricGrid(listOf("Hot water temp" to v.dhw, "Hot water target" to v.dhwTarget))
+                    DashboardSection("DOMESTIC HOT WATER", null) {
+                        MetricGrid(listOf(
+                            "Actual temperature" to v.dhw,
+                            "Target temperature" to v.dhwTarget
+                        ))
                     }
                     if (capturedText.isNotBlank()) {
                         Text("Source: official ecoNET portal · $lastRead", style = MaterialTheme.typography.bodySmall)
