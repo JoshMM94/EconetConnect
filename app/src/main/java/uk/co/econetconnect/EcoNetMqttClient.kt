@@ -47,6 +47,7 @@ class EcoNetMqttClient(
     @Volatile private var connAckError: String? = null
     @Volatile private var subAckId: Int? = null
     @Volatile private var subAckCodes: IntArray? = null
+    @Volatile private var pubAckId: Int? = null
     @Volatile private var lastResponse: JSONObject? = null
     @Volatile private var socketFailure: String? = null
     @Volatile private var lastInboundFrame: String? = null
@@ -108,7 +109,7 @@ class EcoNetMqttClient(
 
         val subscribeId = nextPacketId()
         val subscribeBody = PacketWriter().short(subscribeId)
-            .mqttString(responseTopic).byte(0).mqttString(notificationTopic).byte(0).result()
+            .mqttString(responseTopic).byte(1).mqttString(notificationTopic).byte(1).result()
         if (socket?.send(ByteString.of(*mqttPacket(0x82, subscribeBody))) != true) {
             throw IllegalStateException("Could not send MQTT SUBSCRIBE.")
         }
@@ -175,10 +176,18 @@ class EcoNetMqttClient(
             .put("operations", org.json.JSONArray().put(operation))
         lastResponse = null
         val payload = envelope.toString().toByteArray(StandardCharsets.UTF_8)
-        val body = PacketWriter().mqttString(requestTopic).bytes(payload).result()
-        if (socket?.send(ByteString.of(*mqttPacket(0x30, body))) != true) {
+        // Match the reference client's QoS 1 publishing (Paho default).
+        // QoS 1 includes a packet identifier and requires a PUBACK.
+        val publishId = nextPacketId()
+        pubAckId = null
+        val body = PacketWriter().mqttString(requestTopic).short(publishId).bytes(payload).result()
+        if (socket?.send(ByteString.of(*mqttPacket(0x32, body))) != true) {
             throw IllegalStateException("Could not publish MQTT request.")
         }
+        waitUntil(timeoutMs, "Timed out waiting for MQTT PUBACK for packet $publishId.") {
+            pubAckId == publishId || socketFailure != null
+        }
+        socketFailure?.let { throw IllegalStateException("MQTT connection lost before PUBACK: $it") }
         waitUntil(timeoutMs, "ecoNET MQTT request timed out after ${timeoutMs}ms.") {
             lastResponse?.optString("transactionId") == id || socketFailure != null
         }
@@ -227,6 +236,10 @@ class EcoNetMqttClient(
             2 -> if (remaining >= 2) {
                 connAckCode = packet[index + 1].toInt() and 0xFF
                 if (connAckCode != 0) connAckError = "MQTT CONNACK rejected connection (return code $connAckCode)."
+                synchronized(monitor) { monitor.notifyAll() }
+            }
+            4 -> if (remaining >= 2) {
+                pubAckId = ((packet[index].toInt() and 0xFF) shl 8) or (packet[index + 1].toInt() and 0xFF)
                 synchronized(monitor) { monitor.notifyAll() }
             }
             9 -> if (remaining >= 3) {
