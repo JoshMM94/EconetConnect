@@ -502,18 +502,23 @@ object EcoNetCloudApi {
                     val session = authSession as? AWSCognitoAuthSession
                         ?: throw IllegalStateException("Cognito session was not available.")
                     if (!session.isSignedIn) throw IllegalStateException("Please sign in again.")
+                    val idToken = session.userPoolTokensResult.value?.idToken
+                        ?: throw IllegalStateException("Cognito ID token is unavailable.")
                     val credentials = session.awsCredentialsResult.value as? AWSTemporaryCredentials
                         ?: throw IllegalStateException("AWS temporary credentials are unavailable.")
                     val identityId = session.identityIdResult.value
                         ?: throw IllegalStateException("Cognito Identity Pool identity ID is unavailable.")
+                    val principal = resolveMqttPrincipal(idToken, identityId, serviceId)
                     Thread {
                         var mqtt: EcoNetMqttClient? = null
                         try {
                             val output = JSONObject().put("installationId", installationId)
                                 .put("retrievedAtUtc", java.time.Instant.now().toString())
-                                .put("method", "GET_VALUES").put("components", JSONArray())
+                                .put("method", "GET_VALUES")
+                                .put("mqttPrincipalType", if (principal.second) "service" else "default")
+                                .put("components", JSONArray())
                             val failures = JSONArray()
-                            mqtt = EcoNetMqttClient(installationId, identityId, credentials, false)
+                            mqtt = EcoNetMqttClient(installationId, principal.first, credentials, principal.second)
                             mqtt.connect()
                             profiles.forEach { profile ->
                                 val component = components.firstOrNull { it.name == profile.componentName }
